@@ -1,0 +1,21 @@
+# Secrets — never commit
+.env
+*.pem
+*.key
+kalshi_private_key*
+
+# Runtime files
+bot_config.json
+bot_status.json
+current_position.json
+trades/
+
+# Python
+__pycache__/
+*.py[cod]
+venv/
+.venv/
+*.egg-info/
+
+# macOS
+.DS_Store
