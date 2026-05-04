@@ -409,8 +409,8 @@ Input:focus { border: solid #ffc837; color: #fff; }
 }
 #toggle-btn.stop-state:hover { background: #2a0010; }
 #setup-btn {
-    width: 5; height: 3; background: #0a0f1a;
-    color: #ffc837; border: solid #443300; margin: 0 0 1 0;
+    width: 1fr; height: 3; background: #0a0f1a;
+    color: #ffc837; border: solid #443300; margin: 2 0 1 0;
 }
 #setup-btn:hover { background: #1a1500; color: #ffe066; }
 #bot-status { height: 2; color: #aaa; }
@@ -504,7 +504,6 @@ class BTCKillerApp(App):
                 yield Static("◈ BOT", classes="sec")
                 with Horizontal(classes="tr"):
                     yield Button("▶  Start", id="toggle-btn", classes="start-state")
-                    yield Button("⚙",        id="setup-btn")
                 yield Static("", id="bot-status")
 
                 yield Static("◈ MODE", classes="sec")
@@ -563,6 +562,7 @@ class BTCKillerApp(App):
                     yield Static("Floor balance ($)", classes="lbl")
                     yield Input(value="20", id="hard-stop-amt")
 
+                yield Button("⚙  Setup / Reconfigure", id="setup-btn")
 
             # ── CENTER ──────────────────────────────────────────────────────
             with Vertical(id="center"):
