@@ -262,10 +262,11 @@ You are an active trading co-pilot, not a chatbot. Be direct, specific, and data
 === USER ===
 {query}"""
 
+    log_cb("[dim #4a9eff]⟳ thinking…[/]")
     try:
         proc = subprocess.run(
             ["claude", "-p", prompt],
-            capture_output=True, text=True, timeout=60,
+            capture_output=True, text=True, timeout=120,
         )
         if proc.returncode != 0:
             err = proc.stderr.strip() or "claude CLI returned non-zero"
