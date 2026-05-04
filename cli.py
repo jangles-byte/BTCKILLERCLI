@@ -245,7 +245,9 @@ def _braille_chart(values: list[float], width: int, height: int,
     px_w = width * 2
     px_h = height * 4
     v_min = min(values); v_max = max(values)
-    pad   = max((v_max - v_min) * 0.08, 30)
+    spread = v_max - v_min
+    # tight padding: show 10% extra so data fills 80%+ of chart height
+    pad   = max(spread * 0.12, spread * 0.5 if spread < 20 else 20)
     v_min -= pad; v_max += pad
 
     def to_px(v: float) -> int:
@@ -363,37 +365,33 @@ Screen { background: #060a12; layout: vertical; }
 }
 #main-row { height: 1fr; }
 
-/* ── Settings (left) ── */
+/* ─────────────────────────────────────────────
+   LEFT — Settings panel
+───────────────────────────────────────────── */
 #settings {
-    width: 28; background: #080c14;
+    width: 30; background: #080c14;
     border-right: solid #1a2535; padding: 0 1;
 }
-.sec {
-    color: #ffc837; text-style: bold; height: 1;
-    margin: 1 0 0 0; padding: 0;
-}
-.lbl { color: #445566; height: 1; }
-.tr  { height: 3; margin: 0; }
-
-.tog {
+.sec  { color: #ffc837; text-style: bold; height: 1; margin: 1 0 0 0; }
+.lbl  { color: #445566; height: 1; }
+.tr   { height: 3; }
+.tog  {
     width: 1fr; height: 3; min-width: 0;
     background: #080c14; border: solid #1a2535; color: #334455;
 }
 .tog:hover { background: #101825; color: #778899; }
-.ton {
+.ton  {
     width: 1fr; height: 3; min-width: 0;
     background: #001a10; border: solid #00883a; color: #00ff88; text-style: bold;
 }
 .ton:hover { background: #002818; }
-
 Input {
     height: 3; background: #080c14; border: solid #1a2535;
-    color: #cce8ff; margin: 0 0 0 0; padding: 0 1;
+    color: #cce8ff; margin: 0; padding: 0 1;
 }
 Input:focus { border: solid #ffc837; color: #fff; }
-.prev { color: #2a3a4a; height: 1; }
+.prev     { color: #2a3a4a; height: 1; }
 .sub-wrap { padding: 0; margin: 0; }
-
 #start-btn {
     width: 1fr; height: 3; background: #001a10;
     color: #00ff88; border: solid #00883a; margin: 0 1 1 0;
@@ -404,13 +402,15 @@ Input:focus { border: solid #ffc837; color: #fff; }
     color: #ff3b5c; border: solid #882030; margin: 0 0 1 0;
 }
 #stop-btn:hover { background: #2a0010; }
-#bot-status { height: 2; color: #aaa; padding: 0; }
+#bot-status { height: 2; color: #aaa; }
 
-/* ── Center ── */
+/* ─────────────────────────────────────────────
+   CENTER — Chart + live info
+───────────────────────────────────────────── */
 #center { width: 1fr; background: #060a12; padding: 0 1; }
 
 BrailleChart {
-    height: 20; border: solid #1a2535;
+    height: 1fr; border: solid #1a2535;
     background: #060a12; margin: 0 0 1 0;
 }
 #mkt-row {
@@ -427,30 +427,35 @@ BrailleChart {
 }
 #pos-panel {
     height: 2; border: solid #1a2535;
-    background: #080c14; padding: 0 1; margin: 0 0 1 0;
-}
-#sig-panel {
-    height: 1fr; border: solid #1a2535;
-    background: #080c14; padding: 1 1;
+    background: #080c14; padding: 0 1;
 }
 
-/* ── Right ── */
-#right { width: 46; background: #060a12; border-left: solid #1a2535; padding: 0 1; }
+/* ─────────────────────────────────────────────
+   RIGHT — Signals + Log + Trades
+───────────────────────────────────────────── */
+#right {
+    width: 52; background: #060a12;
+    border-left: solid #1a2535; padding: 0 1;
+}
 #macro-row {
     height: 2; border: solid #1a2535; background: #080c14;
     padding: 0 1; margin: 0 0 1 0;
 }
+#sig-panel {
+    height: 9; border: solid #1a2535;
+    background: #080c14; padding: 1 1; margin: 0 0 1 0;
+}
 #bot-log {
     height: 1fr; border: solid #1a2535;
-    background: #080c14; scrollbar-size: 1 1;
+    background: #080c14; scrollbar-size: 1 1; margin: 0 0 1 0;
 }
 #trade-stats {
     height: 5; border: solid #1a2535;
-    background: #080c14; padding: 0 1; margin: 1 0 0 0;
+    background: #080c14; padding: 0 1; margin: 0 0 1 0;
 }
 #trade-list {
-    height: 11; border: solid #1a2535;
-    background: #080c14; padding: 0 1; margin: 1 0 0 0;
+    height: 12; border: solid #1a2535;
+    background: #080c14; padding: 0 1;
 }
 
 Footer { background: #080c14; color: #1a2535; }
@@ -563,11 +568,11 @@ class BTCKillerApp(App):
                 yield Static("", id="watch-banner")
                 yield Static("", id="odds-row")
                 yield Static("", id="pos-panel")
-                yield Static("", id="sig-panel")
 
             # ── RIGHT ────────────────────────────────────────────────────────
             with Vertical(id="right"):
                 yield Static("", id="macro-row")
+                yield Static("", id="sig-panel")
                 yield RichLog(id="bot-log", highlight=False, markup=True,
                               wrap=False, auto_scroll=True)
                 yield Static("", id="trade-stats")
@@ -827,16 +832,31 @@ class BTCKillerApp(App):
             f"  {tc_(s.get('trend_24h'),'24H')}  {rng_s}  {vol_s}"
         )
 
-        # Signals
+        # Signals (right panel)
         raw  = s.get("signals", [])
+        BAR  = 22
         sigs = ["[bold #ffc837]◈ SIGNALS[/]"]
-        for sg in raw[:8]:
-            nm  = sg.get("name","?")[:16]
+        sig_names = raw if raw else [
+            {"name": "Liquidations", "value": 0},
+            {"name": "Momentum",     "value": 0},
+            {"name": "Kalshi Dist",  "value": 0},
+            {"name": "Crowd",        "value": 0},
+            {"name": "Multi-TF",     "value": 0},
+        ]
+        for sg in sig_names[:7]:
+            nm  = sg.get("name","?")[:14]
             val = sg.get("value", 0)
-            bl  = min(14, int(abs(val) * 14))
-            sc3 = "#00ff88" if val > 0 else "#ff3b5c" if val < 0 else "#334455"
-            bar = f"[{sc3}]{'█'*bl}[/]{'░'*(14-bl)}"
-            sigs.append(f" [dim]{nm:<16}[/] {bar} [{sc3}]{val:+.2f}[/]")
+            bl  = min(BAR, int(abs(val) * BAR))
+            mid = BAR // 2
+            if val > 0:
+                bar = "░" * mid + "[#00ff88]" + "█" * min(bl, mid) + "[/]" + "░" * max(0, mid - bl)
+                sc3 = "#00ff88"
+            elif val < 0:
+                bar = "░" * max(0, mid - bl) + "[#ff3b5c]" + "█" * min(bl, mid) + "[/]" + "░" * mid
+                sc3 = "#ff3b5c"
+            else:
+                bar = "░" * BAR; sc3 = "#334455"
+            sigs.append(f" [dim]{nm:<14}[/] {bar} [{sc3}]{val:+.2f}[/]")
         self.query_one("#sig-panel", Static).update("\n".join(sigs))
 
         # Trade stats
@@ -855,8 +875,8 @@ class BTCKillerApp(App):
         )
 
         # Trade list
-        rows = ["[dim] TIME  SIDE  QTY  ENTRY  P&L[/]"]
-        for t in reversed(trades[-8:]):
+        rows = ["[dim] TIME   SIDE  QTY   ENTRY    P&L[/]"]
+        for t in reversed(trades[-10:]):
             ts   = (t.get("timestamp","")[-8:] or "")[:5]
             sd   = t.get("side","?").upper()
             sc4  = "#00ff88" if sd=="YES" else "#ffc837"
