@@ -105,7 +105,10 @@ def compute_stats(trades: list[dict]) -> dict:
                 profit_factor=pf, win_rate=wr, ev=ev)
 
 # ── Bot process ───────────────────────────────────────────────────────────────
+_bot_notify_cb = None   # set by the App to surface crash toasts
+
 def _stream(proc: subprocess.Popen) -> None:
+    """Drain bot stdout into the log buffer; detect and report crashes."""
     try:
         for line in iter(proc.stdout.readline, b""):
             t = line.decode("utf-8", errors="replace").rstrip()
@@ -113,6 +116,22 @@ def _stream(proc: subprocess.Popen) -> None:
                 bot_log_buffer.append(t)
     except Exception:
         pass
+    # Process ended — log exit code so the user can see why it stopped
+    code = proc.poll()
+    if code is None:
+        # Still running somehow (shouldn't happen here), just return
+        return
+    with state_lock:
+        app_state["bot_running"] = False
+    if code == 0:
+        bot_log_buffer.append("── bot exited cleanly (exit 0) ──")
+    else:
+        bot_log_buffer.append(f"❌ BOT CRASHED — exit code {code} — check log above for traceback")
+        if _bot_notify_cb:
+            try:
+                _bot_notify_cb(f"Bot crashed (exit {code})")
+            except Exception:
+                pass
 
 def start_bot() -> None:
     global bot_process
@@ -134,6 +153,114 @@ def stop_bot() -> None:
         bot_process.terminate(); bot_process = None
     with state_lock:
         app_state["bot_running"] = False
+
+# ── Claude CLI helper ────────────────────────────────────────────────────────
+# Uses the local `claude` CLI (Claude Code) — no API key needed, uses your subscription.
+_PROTECTED_SETTINGS = {"daily_loss_limit", "hard_stop_balance", "hard_stop_enabled"}
+
+def _claude_ask(query: str, state: dict, cfg: dict, log_cb, apply_cb,
+                firepower: bool = False, fire_cb=None) -> None:
+    """Call `claude -p` subprocess with full bot context. Runs in a daemon thread."""
+
+    sigs_txt = "\n".join(
+        f"  {sg.get('name','?')}: {sg.get('yes_prob',0.5)*100:.0f}%  str={sg.get('strength',0):.2f}  {sg.get('reason','')}"
+        for sg in state.get("signals", [])
+    ) or "  none yet"
+
+    safe_cfg = {k: v for k, v in cfg.items() if k not in _PROTECTED_SETTINGS}
+
+    prompt = f"""You are an AI assistant embedded inside a Kalshi BTC prediction market trading bot CLI.
+
+=== LIVE MARKET STATE ===
+BTC price     : ${state.get('btc_price') or 0:,.2f}
+Strike        : ${state.get('target_price') or 0:,.2f}  ({state.get('target_dir','')})
+Time remaining: {int((state.get('secs_remaining') or 0)//60)}m {int((state.get('secs_remaining') or 0)%60)}s
+YES ask       : {(state.get('yes_ask') or 0)*100:.0f}¢    NO ask: {(state.get('no_ask') or 0)*100:.0f}¢
+Our YES prob  : {state.get('our_yes_prob',0.5)*100:.0f}%   Conviction: {state.get('conviction',0):.2f}
+Bot running   : {state.get('bot_running', False)}
+Balance       : ${state.get('balance') or 0:.2f}
+Signals:
+{sigs_txt}
+
+=== CURRENT SETTINGS (you can change these) ===
+{json.dumps(safe_cfg, indent=2)}
+
+=== PROTECTED (never touch) ===
+daily_loss_limit, hard_stop_balance — do NOT change these.
+
+=== FIREPOWER ===
+Firepower enabled: {firepower}
+If firepower is ON and you are confident the bot should enter a trade right now,
+you may include FIRE_BOT on its own line at the very end of your response.
+Only do this if the user explicitly asks you to fire, or if conditions are compelling
+AND firepower is enabled. Never include FIRE_BOT if firepower is False.
+
+=== YOUR JOB ===
+Answer the user's question concisely (2-4 sentences, no markdown).
+If the user asks you to change a setting, include EXACTLY this line at the very end:
+APPLY:{{"key": value, ...}}
+
+Only include APPLY: if explicitly asked to change something.
+Only include FIRE_BOT if firepower is ON and a trade should be fired.
+
+=== USER ===
+{query}"""
+
+    try:
+        proc = subprocess.run(
+            ["claude", "-p", prompt],
+            capture_output=True, text=True, timeout=60,
+        )
+        if proc.returncode != 0:
+            err = proc.stderr.strip() or "claude CLI returned non-zero"
+            log_cb(f"[#ff3b5c]{err}[/]")
+            return
+
+        response = proc.stdout.strip()
+
+        # Extract and strip FIRE_BOT directive
+        fire_requested = False
+        lines = response.splitlines()
+        clean_lines = []
+        for ln in lines:
+            if ln.strip() == "FIRE_BOT":
+                fire_requested = True
+            else:
+                clean_lines.append(ln)
+        response = "\n".join(clean_lines).strip()
+
+        # Split off any APPLY: line
+        if "APPLY:" in response:
+            parts    = response.rsplit("APPLY:", 1)
+            display  = parts[0].strip()
+            try:
+                changes = json.loads(parts[1].strip())
+                safe    = {k: v for k, v in changes.items() if k not in _PROTECTED_SETTINGS}
+                if safe:
+                    apply_cb(safe)
+                    keys = ", ".join(safe.keys())
+                    log_cb(f"[bold #00ff88]◈[/] {display}")
+                    log_cb(f"[bold #ffc837]⚙  applied → {keys}[/]")
+                    if fire_requested and firepower and fire_cb:
+                        fire_cb()
+                    return
+            except Exception:
+                pass  # fall through to show raw response
+
+        log_cb(f"[bold #00ff88]◈[/] {response}")
+
+        # Handle FIRE_BOT after displaying response
+        if fire_requested and firepower and fire_cb:
+            fire_cb()
+        elif fire_requested and not firepower:
+            log_cb("[dim #ff3b5c]⚠  Claude wanted to fire but firepower is OFF.[/]")
+
+    except FileNotFoundError:
+        log_cb("[#ff3b5c]'claude' not found — is Claude Code installed and on PATH?[/]")
+    except subprocess.TimeoutExpired:
+        log_cb("[#ff3b5c]timed out waiting for Claude[/]")
+    except Exception as e:
+        log_cb(f"[#ff3b5c]error: {e}[/]")
 
 # ── Background updater ────────────────────────────────────────────────────────
 def background_updater() -> None:
@@ -285,12 +412,14 @@ def _braille_chart(values: list[float], width: int, height: int,
                     if 0 < tr < px_h - 1:
                         target_g[tr - 1][c] = True
         else:
-            # Draw solid yellow band at top or bottom edge
-            edge = 0 if target > v_max else px_h - 1
-            edge2 = 1 if edge == 0 else px_h - 2
-            for c in range(px_w):
-                target_g[edge][c]  = True
-                target_g[edge2][c] = True
+            # Draw solid yellow band — fill a full braille cell (4 pixel rows) at edge
+            if target > v_max:
+                band = range(4)               # top 4 pixel rows → top char row
+            else:
+                band = range(px_h - 4, px_h)  # bottom 4 pixel rows → bottom char row
+            for er in band:
+                for c in range(px_w):
+                    target_g[er][c] = True
 
     DOT = [[0x01, 0x08], [0x02, 0x10], [0x04, 0x20], [0x40, 0x80]]
 
@@ -475,9 +604,21 @@ Input:focus { border: solid #ffc837; color: #fff; }
 #center { width: 1fr; background: #060a12; padding: 0 1; }
 
 BrailleChart {
-    height: 1fr; border: solid #1a2535;
+    height: 22; border: solid #1a2535;
     background: #060a12; margin: 0 0 1 0;
 }
+#claude-header {
+    height: 1; color: #4a9eff; padding: 0 1; margin: 1 0 0 0;
+}
+#claude-log {
+    height: 1fr; border: solid #1a2535;
+    background: #080c14; scrollbar-size: 1 1; margin: 0 0 0 0;
+}
+#claude-input {
+    height: 3; background: #080c14;
+    border: solid #1a3355; color: #cce8ff; margin: 0;
+}
+#claude-input:focus { border: solid #4a9eff; }
 #mkt-row {
     height: 4; border: solid #1a2535; background: #080c14;
     padding: 0 2; margin: 0 0 1 0;
@@ -552,6 +693,7 @@ class BTCKillerApp(App):
     _loss_period: str  = "daily"
     _kelly_on:    bool = False
     _always_entry:str  = "signal"
+    _firepower:   bool = False   # must be explicitly enabled each session
 
     def compose(self) -> ComposeResult:
         yield ASCIIBanner(id="banner")
@@ -625,6 +767,13 @@ class BTCKillerApp(App):
                 yield Static("", id="watch-banner")
                 yield Static("", id="odds-row")
                 yield Static("", id="pos-panel")
+                yield Static(
+                    "[bold #4a9eff]◈ CLAUDE[/]  [dim]ask anything about the bot[/]",
+                    id="claude-header", markup=True,
+                )
+                yield RichLog(id="claude-log", highlight=False, markup=True,
+                              wrap=True, auto_scroll=True)
+                yield Input(placeholder="ask claude...", id="claude-input")
 
             # ── RIGHT ────────────────────────────────────────────────────────
             with Vertical(id="right"):
@@ -641,7 +790,12 @@ class BTCKillerApp(App):
 
     # ── Mount ────────────────────────────────────────────────────────────────
     def on_mount(self) -> None:
+        global _bot_notify_cb
         sys.stdout = _BufferWriter()
+        # Wire up crash toast so the App can surface it from the stream thread
+        _bot_notify_cb = lambda msg: self.call_from_thread(
+            self.notify, msg, severity="error", timeout=10
+        )
         # Hide sub-panels that are only shown when their parent mode is active
         self.query_one("#always-wrap").display  = False
         self.query_one("#kelly-wrap").display   = False
@@ -800,8 +954,8 @@ class BTCKillerApp(App):
             chart.prices = hist
             chart.target = tgt
             if btc and tgt:
-                dist_amt = abs(btc - tgt)
-                chart.dist_label = f"${dist_amt:,.2f}"
+                dist_signed = btc - tgt          # negative when BTC is below strike
+                chart.dist_label = f"${dist_signed:+,.2f}"
                 chart.dist_top   = tgt > btc   # target above → label at top
             else:
                 chart.dist_label = None
@@ -819,7 +973,7 @@ class BTCKillerApp(App):
             on_side = (tdir == "above" and dist > 0) or (tdir == "below" and dist < 0)
             dc      = "#00ff88" if on_side else "#ff3b5c"
             arrow   = "▲" if dist > 0 else "▼"
-            dist_dollars = f"${abs(dist):,.2f}"
+            dist_dollars = f"${dist:+,.2f}"
             side_lbl = "above" if dist > 0 else "below"
             ok_lbl   = "✓ on-side" if on_side else "✗ wrong-side"
             dist_str = (
@@ -1004,23 +1158,25 @@ class BTCKillerApp(App):
 
         # Bot log (append-only, scroll-friendly)
         lines = list(bot_log_buffer)
-        if lines and lines[-1] != self._log_last:
-            new = lines[self._log_n:]
-            if new:
-                log = self.query_one("#bot-log", RichLog)
-                for l in new:
-                    if "FIRE" in l or "✅" in l or "CONFIRMED" in l:
-                        log.write(f"[bold #00ff88]{l}[/]")
-                    elif "⚠" in l or "WATCHING" in l or "waiting" in l:
-                        log.write(f"[#ffc837]{l}[/]")
-                    elif "KELLY" in l or "SKIP" in l or "edge" in l:
-                        log.write(f"[#4a9eff]{l}[/]")
-                    elif "❌" in l or "ERROR" in l or "KILL" in l:
-                        log.write(f"[bold #ff3b5c]{l}[/]")
-                    else:
-                        log.write(f"[dim]{l}[/dim]")
-                self._log_n = len(lines)
-            self._log_last = lines[-1]
+        # Handle deque rollover: if _log_n exceeds current buffer size, reset to
+        # show the whole buffer again (avoids permanent freeze after 400 lines)
+        if self._log_n > len(lines):
+            self._log_n = 0
+        new = lines[self._log_n:]
+        if new:
+            log = self.query_one("#bot-log", RichLog)
+            for l in new:
+                if "FIRE" in l or "✅" in l or "CONFIRMED" in l:
+                    log.write(f"[bold #00ff88]{l}[/]")
+                elif "⚠" in l or "WATCHING" in l or "waiting" in l:
+                    log.write(f"[#ffc837]{l}[/]")
+                elif "KELLY" in l or "SKIP" in l or "edge" in l:
+                    log.write(f"[#4a9eff]{l}[/]")
+                elif "❌" in l or "ERROR" in l or "KILL" in l:
+                    log.write(f"[bold #ff3b5c]{l}[/]")
+                else:
+                    log.write(f"[dim]{l}[/dim]")
+            self._log_n = len(lines)
 
     # ── Button handlers ──────────────────────────────────────────────────────
     @on(Button.Pressed, "#toggle-btn")
@@ -1085,9 +1241,75 @@ class BTCKillerApp(App):
     @on(Button.Pressed, "#setup-btn")
     def _h_setup(self): self.action_setup()
 
+    def _apply_settings(self, changes: dict) -> None:
+        """Write Claude-requested setting changes and reload UI."""
+        safe = {k: v for k, v in changes.items() if k not in _PROTECTED_SETTINGS}
+        if not safe:
+            return
+        try:
+            write_cfg(safe)
+            self._load_settings()
+        except Exception as e:
+            self.notify(f"Apply failed: {e}", severity="error")
+
+    def _update_claude_header(self) -> None:
+        fp_tag = (
+            "  [bold #ff4500]🔥 FIREPOWER ON[/]" if self._firepower else ""
+        )
+        self.query_one("#claude-header", Static).update(
+            f"[bold #4a9eff]◈ CLAUDE[/]  [dim]ask anything about the bot[/]{fp_tag}"
+        )
+
+    @on(Input.Submitted, "#claude-input")
+    def _claude_submit(self, event: Input.Submitted) -> None:
+        query = event.value.strip()
+        if not query:
+            return
+        event.input.value = ""
+        log = self.query_one("#claude-log", RichLog)
+
+        # Handle firepower toggle locally — no need to round-trip Claude
+        ql = query.lower()
+        if "enable firepower" in ql or "firepower on" in ql:
+            self._firepower = True
+            self._update_claude_header()
+            log.write("[bold #ff4500]🔥 Firepower ENABLED — Claude can now fire trades.[/]")
+            log.write("[dim #ffc837]Type 'disable firepower' or 'firepower off' to revoke.[/]")
+            return
+        if "disable firepower" in ql or "firepower off" in ql:
+            self._firepower = False
+            self._update_claude_header()
+            log.write("[bold #00ff88]✓ Firepower DISABLED.[/]")
+            return
+
+        log.write(f"[dim #4a9eff]▶[/] {query}")
+        with state_lock:
+            snap = dict(app_state)
+        cfg_snap = read_cfg()
+        fp = self._firepower
+        threading.Thread(
+            target=_claude_ask,
+            args=(
+                query, snap, cfg_snap,
+                lambda txt: self.call_from_thread(log.write, txt),
+                lambda c:   self.call_from_thread(self._apply_settings, c),
+                fp,
+                lambda: self.call_from_thread(self._fire_bot_from_claude),
+            ),
+            daemon=True,
+        ).start()
+
+    def _fire_bot_from_claude(self) -> None:
+        """Called when Claude issues FIRE_BOT and firepower is enabled."""
+        log = self.query_one("#claude-log", RichLog)
+        log.write("[bold #ff4500]🔥 FIRE_BOT — Claude is starting the bot![/]")
+        start_bot()
+        self.notify("🔥 Claude fired the bot!", severity="warning")
+
     @on(Input.Submitted)
-    def _inp_submit(self, _):
-        self._save()
+    def _inp_submit(self, event: Input.Submitted) -> None:
+        if event.input.id != "claude-input":
+            self._save()
 
     def action_start_bot(self):
         with state_lock:

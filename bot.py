@@ -103,7 +103,9 @@ def find_current_market():
         BASE_URL + "/markets",
         headers=sign_request("GET", path),
         params={"series_ticker": "KXBTC15M", "status": "open", "limit": 5},
+        timeout=10,
     )
+    r.raise_for_status()
     markets  = r.json().get("markets", [])
     now      = datetime.now(timezone.utc)
     best, best_diff = None, float("inf")
@@ -159,7 +161,8 @@ def sell_position(ticker, side, num_contracts, price_dollars):
         "type": "limit", "count": num_contracts, key: price_str,
     })
     r = requests.post(BASE_URL + "/portfolio/orders",
-                     headers=sign_request("POST", path), data=body)
+                     headers=sign_request("POST", path), data=body, timeout=10)
+    r.raise_for_status()
     return r.json()
 
 def place_order(ticker, side, price_dollars, num_contracts):
@@ -175,8 +178,9 @@ def place_order(ticker, side, price_dollars, num_contracts):
     })
     r = requests.post(
         BASE_URL + "/portfolio/orders",
-        headers=sign_request("POST", path), data=body,
+        headers=sign_request("POST", path), data=body, timeout=10,
     )
+    r.raise_for_status()
     return r.json()
 
 def get_market_prices(ticker):
@@ -447,8 +451,13 @@ def run_bot():
             # ── Refresh market every 10s ─────────────────────────────────
             now = time.time()
             if not last_market or (now - last_mkt_time) > 10:
-                last_market, secs_remaining = find_current_market()
-                last_mkt_time = now
+                try:
+                    last_market, secs_remaining = find_current_market()
+                    last_mkt_time = now
+                except Exception as mkt_err:
+                    print(f"  Market refresh failed: {mkt_err} — retrying in 5s")
+                    time.sleep(5)
+                    continue
             elif last_market:
                 close = datetime.fromisoformat(
                     last_market["close_time"].replace("Z", "+00:00"))

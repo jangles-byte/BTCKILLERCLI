@@ -90,6 +90,12 @@ else
     echo -e "  ${YELLOW}  Skipping Telegram (can add later via setup)${NC}"
 fi
 
+echo ""
+echo -e "  ${BOLD}Claude CLI${NC} ${CYAN}(optional — enables AI assistant inside the dashboard)${NC}"
+echo -e "  ${CYAN}Get a key at console.anthropic.com → API Keys${NC}"
+echo ""
+read -p "  Anthropic API Key:        " ANTHROPIC_KEY
+
 cat > .env << EOF
 KALSHI_API_KEY_ID=$KALSHI_KEY_ID
 KALSHI_PRIVATE_KEY_PATH=$KALSHI_PEM
@@ -99,6 +105,7 @@ MAX_CONTRACTS_PER_TRADE=$MAX_C
 TELEGRAM_ENABLED=$TG_ENABLED
 TELEGRAM_BOT_TOKEN=$TG_TOKEN
 TELEGRAM_ALLOWED_USERS=$TG_USERS
+ANTHROPIC_API_KEY=$ANTHROPIC_KEY
 EOF
 echo ""
 echo -e "  ${GREEN}✓ Config saved${NC}"

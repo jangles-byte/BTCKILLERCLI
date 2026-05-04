@@ -171,9 +171,7 @@ def on_error(ws, error):
     print(f"WebSocket error: {error}")
 
 def on_close(ws, *args):
-    print("WebSocket closed — reconnecting in 3s...")
-    time.sleep(3)
-    start_price_feed()
+    print("WebSocket closed")
 
 def on_open(ws):
     print("Connected to Coinbase BTC price feed")
@@ -183,16 +181,30 @@ def on_open(ws):
         "channels": ["ticker"]
     }))
 
+def _price_feed_loop():
+    """Reconnect loop — runs in its own thread. Never recurses."""
+    backoff = 3
+    while True:
+        try:
+            ws = websocket.WebSocketApp(
+                "wss://ws-feed.exchange.coinbase.com",
+                on_message=on_message, on_error=on_error,
+                on_close=on_close, on_open=on_open,
+            )
+            # ping_interval keeps the TCP connection alive and detects silent drops
+            ws.run_forever(ping_interval=20, ping_timeout=10)
+        except Exception as e:
+            print(f"WebSocket exception: {e}")
+        print(f"WebSocket disconnected — reconnecting in {backoff}s...")
+        time.sleep(backoff)
+        backoff = min(backoff * 2, 60)   # exponential back-off, cap at 60s
+
+# Legacy name kept so bot.py's import still works
 def start_price_feed():
-    ws = websocket.WebSocketApp(
-        "wss://ws-feed.exchange.coinbase.com",
-        on_message=on_message, on_error=on_error,
-        on_close=on_close, on_open=on_open,
-    )
-    ws.run_forever()
+    _price_feed_loop()
 
 def start_feed_thread():
-    threading.Thread(target=start_price_feed, daemon=True).start()
+    threading.Thread(target=_price_feed_loop, daemon=True).start()
     threading.Thread(target=coinalyze_refresh_loop, daemon=True).start()
     threading.Thread(target=candles_refresh_loop, daemon=True).start()
 
