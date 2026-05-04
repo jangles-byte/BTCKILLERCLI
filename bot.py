@@ -160,10 +160,12 @@ def sell_position(ticker, side, num_contracts, price_dollars):
         "ticker": ticker, "action": "sell", "side": side,
         "type": "limit", "count": num_contracts, key: price_str,
     })
-    r = requests.post(BASE_URL + "/portfolio/orders",
-                     headers=sign_request("POST", path), data=body, timeout=10)
-    r.raise_for_status()
-    return r.json()
+    try:
+        r = requests.post(BASE_URL + "/portfolio/orders",
+                         headers=sign_request("POST", path), data=body, timeout=10)
+        return r.json()
+    except Exception as e:
+        return {"error": {"details": str(e)}}
 
 def place_order(ticker, side, price_dollars, num_contracts):
     """Place a limit order slightly above ask to guarantee fill."""
@@ -176,12 +178,14 @@ def place_order(ticker, side, price_dollars, num_contracts):
         "ticker": ticker, "action": "buy", "side": side,
         "type": "limit", "count": num_contracts, key: price_str,
     })
-    r = requests.post(
-        BASE_URL + "/portfolio/orders",
-        headers=sign_request("POST", path), data=body, timeout=10,
-    )
-    r.raise_for_status()
-    return r.json()
+    try:
+        r = requests.post(
+            BASE_URL + "/portfolio/orders",
+            headers=sign_request("POST", path), data=body, timeout=10,
+        )
+        return r.json()
+    except Exception as e:
+        return {"error": {"details": str(e)}}
 
 def get_market_prices(ticker):
     """Fetch current YES/NO ask prices for a live market."""
@@ -347,9 +351,12 @@ def run_bot():
     print("=" * 60)
 
     print("\nStarting feeds...")
-    start_feed_thread()
-    print("Waiting 40 seconds for data to load...")
-    time.sleep(40)
+    try:
+        start_feed_thread()
+    except Exception as e:
+        print(f"  Feed startup error (continuing anyway): {e}")
+    print("Waiting 30 seconds for data to load...")
+    time.sleep(30)
 
     open_trades    = []
     last_market    = None
@@ -378,12 +385,13 @@ def run_bot():
     }
 
     while True:
-        if session["killed"]:
-            print("KILL SWITCH. Stopping.")
-            write_bot_status("killed")
-            break
-
         try:
+            # Only legitimate stops: loss limit or wallet floor
+            if session["killed"]:
+                print("KILL SWITCH — loss limit or wallet floor hit. Stopping.")
+                write_bot_status("killed")
+                return   # exits run_bot() — outer wrapper won't restart
+
             cfg = load_config()
             mode             = cfg.get("mode", "balanced")
             daily_loss_lim    = float(cfg.get("daily_loss_limit", DAILY_LOSS_LIMIT))
@@ -850,14 +858,42 @@ def run_bot():
             write_bot_status("traded", direction=direction, mins_remaining=mins_rem)
             streak = {"direction": None, "count": 0, "conviction": 0.0}
 
-        except Exception as e:
-            print(f"Error: {e}")
+        except KeyboardInterrupt:
+            print("\nKeyboard interrupt — shutting down.")
+            write_bot_status("killed")
+            return
+
+        except BaseException as e:
             import traceback
+            print(f"\n⚠  Loop error ({type(e).__name__}): {e}")
             traceback.print_exc()
+            print("  Recovering in 5s...")
+            try:
+                write_bot_status("idle")
+            except Exception:
+                pass
             time.sleep(5)
+            # DO NOT break/return — loop continues
 
         time.sleep(2)
 
 
 if __name__ == "__main__":
-    run_bot()
+    import traceback as _tb
+    while True:
+        try:
+            run_bot()
+            # run_bot() returned normally — means kill switch was hit
+            print("Bot stopped (kill switch / loss limit). Not restarting.")
+            break
+        except KeyboardInterrupt:
+            print("\nShutting down.")
+            break
+        except BaseException as e:
+            print(f"\n❌ run_bot() crashed unexpectedly: {e}")
+            _tb.print_exc()
+            if session.get("killed"):
+                print("Kill flag set — not restarting.")
+                break
+            print("Restarting bot in 10s...")
+            time.sleep(10)
