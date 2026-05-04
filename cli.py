@@ -402,36 +402,55 @@ def _braille_chart(values: list[float], width: int, height: int,
             for row in range(lo, hi + 1):
                 price_g[row][i] = True
 
-    # Target line — dashed if on-chart, solid edge band if off-chart
-    if target is not None:
-        if v_min < target < v_max:
-            tr = to_px(target)
-            for c in range(px_w):
-                if (c // 3) % 2 == 0:
-                    target_g[tr][c] = True
-                    if 0 < tr < px_h - 1:
-                        target_g[tr - 1][c] = True
-        else:
-            # Draw solid yellow band — fill a full braille cell (4 pixel rows) at edge
-            if target > v_max:
-                band = range(4)               # top 4 pixel rows → top char row
-            else:
-                band = range(px_h - 4, px_h)  # bottom 4 pixel rows → bottom char row
-            for er in band:
-                for c in range(px_w):
-                    target_g[er][c] = True
+    # Target line — dashed pixels if on-chart only
+    target_on_chart  = target is not None and v_min < target < v_max
+    target_above     = target is not None and target >= v_max   # anchor to top
+    target_below     = target is not None and target <= v_min   # anchor to bottom
+
+    if target_on_chart:
+        tr = to_px(target)
+        for c in range(px_w):
+            if (c // 3) % 2 == 0:
+                target_g[tr][c] = True
+                if 0 < tr < px_h - 1:
+                    target_g[tr - 1][c] = True
 
     DOT = [[0x01, 0x08], [0x02, 0x10], [0x04, 0x20], [0x40, 0x80]]
 
-    # Price labels (right side)
-    top_label = f" ${v_max + pad:,.0f}"
-    bot_label = f" ${v_min + pad:,.0f}"
-
     # Current price arrow position
-    cur_row = to_px(values[-1]) // 4 if values else 0
+    cur_row   = to_px(values[-1]) // 4 if values else 0
+    cur_price = values[-1] if values else 0
+    mid_row   = height // 2
+    tgt_row   = to_px(target) // 4 if target_on_chart else -1
 
     result = Text()
     for cr in range(height):
+
+        # ── Off-chart target band: bypass pixel grid, write directly ──────────
+        # This guarantees the yellow bar is always visible regardless of what
+        # the price line pixels are doing in the same character rows.
+        if cr == 0 and target_above:
+            result.append("▓" * width, style="bold #ffc837")
+            result.append(f" ▲ strike ${target:,.0f}", style="bold #ffc837")
+            result.append("\n")
+            continue
+        if cr == 1 and target_above:
+            result.append("░" * width, style="#7a5500")
+            result.append(f" {dist_label or ''}", style="bold #ffc837")
+            result.append("\n")
+            continue
+        if cr == height - 1 and target_below:
+            result.append("▓" * width, style="bold #ffc837")
+            result.append(f" ▼ strike ${target:,.0f}", style="bold #ffc837")
+            result.append("\n")
+            continue
+        if cr == height - 2 and target_below:
+            result.append("░" * width, style="#7a5500")
+            result.append(f" {dist_label or ''}", style="bold #ffc837")
+            result.append("\n")
+            continue
+
+        # ── Normal pixel rendering ─────────────────────────────────────────────
         for cc in range(width):
             pb = tb = 0
             for dr in range(4):
@@ -444,7 +463,6 @@ def _braille_chart(values: list[float], width: int, height: int,
             if   combined == 0:  result.append(ch, style="#0d1520")
             elif tb and not pb:  result.append(ch, style="#ffc837")
             elif pb and not tb:
-                # gradient: newer data is brighter
                 col_frac = (cc + 1) / width
                 if col_frac > 0.85:    result.append(ch, style="bold #00ff88")
                 elif col_frac > 0.5:   result.append(ch, style="#00cc66")
@@ -452,10 +470,6 @@ def _braille_chart(values: list[float], width: int, height: int,
             else:                result.append(ch, style="bold white")
 
         # Side labels
-        tgt_row   = to_px(target) // 4 if (target is not None and v_min < target < v_max) else -1
-        cur_price = values[-1] if values else 0
-        mid_row   = height // 2   # guaranteed free row for distance label
-
         if cr == 0:
             result.append(f" {v_max:,.0f}", style="dim #667788")
         elif cr == cur_row and cr != mid_row:
@@ -465,7 +479,7 @@ def _braille_chart(values: list[float], width: int, height: int,
         elif cr == mid_row and dist_label:
             arrow = "▲" if dist_top else "▼"
             result.append(f" {arrow} {dist_label} to strike", style="bold #ffc837")
-        elif cr == cur_row:   # mid_row collision fallback
+        elif cr == cur_row:
             result.append(f" ◀ ${cur_price:,.0f}", style="bold #00ff88")
         elif cr == height - 1:
             result.append(f" {v_min:,.0f}", style="dim #667788")
