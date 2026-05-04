@@ -133,14 +133,15 @@ def _stream(proc: subprocess.Popen) -> None:
             except Exception:
                 pass
 
-def start_bot() -> None:
+def start_bot(claude_mode: bool = False) -> None:
     global bot_process
     if bot_process and bot_process.poll() is None:
         return
     bot_log_buffer.clear()
-    env = os.environ.copy(); env["PYTHONUNBUFFERED"] = "1"
+    env  = os.environ.copy(); env["PYTHONUNBUFFERED"] = "1"
+    script = "claude_bot.py" if claude_mode else "bot.py"
     bot_process = subprocess.Popen(
-        [sys.executable, "-u", str(BOT_DIR / "bot.py")],
+        [sys.executable, "-u", str(BOT_DIR / script)],
         cwd=str(BOT_DIR), stdout=subprocess.PIPE, stderr=subprocess.STDOUT, env=env,
     )
     threading.Thread(target=_stream, args=(bot_process,), daemon=True).start()
@@ -672,6 +673,12 @@ Input:focus { border: solid #ffc837; color: #fff; }
     background: #1a0008; color: #ff3b5c; border: solid #882030;
 }
 #toggle-btn.stop-state:hover { background: #2a0010; }
+#cbot-signal { width: 1fr; height: 3; }
+#cbot-claude { width: 1fr; height: 3; }
+#cbot-claude.tog { background: #0d0030; color: #bf5fff; border: solid #6600cc; }
+#cbot-claude.ton { background: #0a0f1a; color: #444; border: solid #222; }
+#cbot-claude.tog:hover { background: #1a0050; }
+#cbot-status { color: #bf5fff; height: 1; }
 #setup-btn {
     width: 1fr; height: 3; background: #0a0f1a;
     color: #ffc837; border: solid #443300; margin: 2 0 1 0;
@@ -778,6 +785,7 @@ class BTCKillerApp(App):
     _kelly_on:    bool = False
     _always_entry:str  = "signal"
     _firepower:   bool = False   # must be explicitly enabled each session
+    _claude_bot:  bool = False   # ClaudeBot mode — Claude makes all trade decisions
     _tg_on:       bool = False
 
     def compose(self) -> ComposeResult:
@@ -790,6 +798,10 @@ class BTCKillerApp(App):
                 with Horizontal(classes="tr"):
                     yield Button("▶  Start", id="toggle-btn", classes="start-state")
                 yield Static("", id="bot-status")
+                with Horizontal(classes="tr", id="claude-bot-row"):
+                    yield Button("◈ SIGNAL BOT", id="cbot-signal", classes="ton")
+                    yield Button("🤖 CLAUDE BOT", id="cbot-claude", classes="tog")
+                yield Static("", id="cbot-status", classes="prev")
 
                 yield Static("◈ MODE", classes="sec")
                 with Horizontal(classes="tr", id="mode-row"):
@@ -962,6 +974,15 @@ class BTCKillerApp(App):
         users_raw = cfg.get("telegram_allowed_users", [])
         users_str = ",".join(str(u) for u in users_raw) if isinstance(users_raw, list) else str(users_raw)
         self._inp("#tg-users", users_str)
+
+        cm = bool(cfg.get("claude_mode", False))
+        self._claude_bot = cm
+        if cm:
+            self._tog2("cbot-signal", "cbot-claude")
+            self.query_one("#cbot-status").update("🤖 Claude decides all trades")
+        else:
+            self._tog2("cbot-claude", "cbot-signal")
+            self.query_one("#cbot-status").update("")
 
 
     def _inp(self, sel: str, val: str) -> None:
@@ -1337,9 +1358,30 @@ class BTCKillerApp(App):
         with state_lock:
             running = app_state.get("bot_running", False)
         if running:
-            stop_bot(); self.notify("Bot stopped.", severity="warning")
+            stop_bot()
+            self.notify("Bot stopped.", severity="warning")
         else:
-            start_bot(); self.notify("Bot starting…", severity="information")
+            if self._claude_bot:
+                start_bot(claude_mode=True)
+                self.notify("🤖 ClaudeBot starting — Claude is the bot!", severity="warning")
+            else:
+                start_bot(claude_mode=False)
+                self.notify("Bot starting…", severity="information")
+
+    @on(Button.Pressed, "#cbot-signal")
+    def _cbot_signal(self):
+        self._claude_bot = False
+        self._tog2("cbot-claude", "cbot-signal")
+        self.query_one("#cbot-status").update("")
+        write_cfg({"claude_mode": False})
+
+    @on(Button.Pressed, "#cbot-claude")
+    def _cbot_claude(self):
+        self._claude_bot = True
+        self._tog2("cbot-signal", "cbot-claude")
+        self.query_one("#cbot-status").update("🤖 Claude decides all trades")
+        write_cfg({"claude_mode": True})
+        self.notify("🤖 ClaudeBot ON — Claude will make all trading decisions", severity="warning", timeout=5)
 
     @on(Button.Pressed, "#mode-smart")
     def _m_smart(self):
@@ -1484,9 +1526,14 @@ class BTCKillerApp(App):
         with state_lock:
             running = app_state.get("bot_running", False)
         if running:
-            stop_bot();  self.notify("Bot stopped.",  severity="warning")
+            stop_bot(); self.notify("Bot stopped.", severity="warning")
         else:
-            start_bot(); self.notify("Bot starting…", severity="information")
+            if self._claude_bot:
+                start_bot(claude_mode=True)
+                self.notify("🤖 ClaudeBot starting — Claude is the bot!", severity="warning")
+            else:
+                start_bot(claude_mode=False)
+                self.notify("Bot starting…", severity="information")
     def action_stop_bot(self): stop_bot(); self.notify("Bot stopped.", severity="warning")
 
     def action_setup(self) -> None:
