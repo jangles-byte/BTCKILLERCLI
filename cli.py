@@ -275,14 +275,22 @@ def _braille_chart(values: list[float], width: int, height: int,
             for row in range(lo, hi + 1):
                 price_g[row][i] = True
 
-    # Target dashed line
-    if target is not None and v_min < target < v_max:
-        tr = to_px(target)
-        for c in range(px_w):
-            if (c // 3) % 2 == 0:
-                target_g[tr][c] = True
-                if 0 < tr < px_h - 1:
-                    target_g[tr - 1][c] = True  # slightly thicker
+    # Target line — dashed if on-chart, solid edge band if off-chart
+    if target is not None:
+        if v_min < target < v_max:
+            tr = to_px(target)
+            for c in range(px_w):
+                if (c // 3) % 2 == 0:
+                    target_g[tr][c] = True
+                    if 0 < tr < px_h - 1:
+                        target_g[tr - 1][c] = True
+        else:
+            # Draw solid yellow band at top or bottom edge
+            edge = 0 if target > v_max else px_h - 1
+            edge2 = 1 if edge == 0 else px_h - 2
+            for c in range(px_w):
+                target_g[edge][c]  = True
+                target_g[edge2][c] = True
 
     DOT = [[0x01, 0x08], [0x02, 0x10], [0x04, 0x20], [0x40, 0x80]]
 
@@ -314,32 +322,24 @@ def _braille_chart(values: list[float], width: int, height: int,
                 else:                  result.append(ch, style="#007744")
             else:                result.append(ch, style="bold white")
 
-        # Side labels  (must use style= arg, NOT markup strings inside append)
-        tgt_row = to_px(target) // 4 if (target is not None and v_min < target < v_max) else -1
-        cur_price   = values[-1] if values else 0
-        tgt_above   = target is not None and tgt_row == -1 and target >  cur_price
-        tgt_below   = target is not None and tgt_row == -1 and target <= cur_price
+        # Side labels
+        tgt_row   = to_px(target) // 4 if (target is not None and v_min < target < v_max) else -1
+        cur_price = values[-1] if values else 0
+        mid_row   = height // 2   # guaranteed free row for distance label
 
         if cr == 0:
-            if dist_label and dist_top:
-                result.append(f" ▲ {dist_label}", style="bold #ffc837")
-            elif tgt_above:
-                result.append(f" ▲ target ${target:,.0f} (off-chart)", style="dim #ffc837")
-            else:
-                result.append(f" {v_max:,.0f}", style="dim #667788")
-        elif cr == 1 and tgt_above and not (dist_label and dist_top):
-            pass   # already used row 0
-        elif cr == cur_row:
+            result.append(f" {v_max:,.0f}", style="dim #667788")
+        elif cr == cur_row and cr != mid_row:
             result.append(f" ◀ ${cur_price:,.0f}", style="bold #00ff88")
-        elif cr == tgt_row:
+        elif cr == tgt_row and cr != mid_row:
             result.append(f" ── target ${target:,.0f}", style="#ffc837")
+        elif cr == mid_row and dist_label:
+            arrow = "▲" if dist_top else "▼"
+            result.append(f" {arrow} {dist_label} to strike", style="bold #ffc837")
+        elif cr == cur_row:   # mid_row collision fallback
+            result.append(f" ◀ ${cur_price:,.0f}", style="bold #00ff88")
         elif cr == height - 1:
-            if dist_label and not dist_top:
-                result.append(f" ▼ {dist_label}", style="bold #ffc837")
-            elif tgt_below:
-                result.append(f" ▼ target ${target:,.0f} (off-chart)", style="dim #ffc837")
-            else:
-                result.append(f" {v_min:,.0f}", style="dim #667788")
+            result.append(f" {v_min:,.0f}", style="dim #667788")
 
         result.append("\n")
 
@@ -859,27 +859,46 @@ class BTCKillerApp(App):
         yev_c = "#00ff88" if yev > 0.02 else "#ff3b5c" if yev < -0.02 else "#ffc837"
         nev_c = "#00ff88" if nev > 0.02 else "#ff3b5c" if nev < -0.02 else "#ffc837"
 
-        bar_w = 24
-        # Market ask bar — moves live with ask prices (ya/na are the raw market cents)
-        mkt_no_pct  = na / (ya + na) if (ya + na) > 0 else 0.5
-        mkt_yes_pct = 1.0 - mkt_no_pct
-        nf = int(mkt_no_pct  * bar_w)
-        yf = bar_w - nf
-        prob_bar = f"[#ff3b5c]{'█'*nf}[/][#00ff88]{'█'*yf}[/]"
-
-        cv = int(conv * 14)
-        conv_bar = "█" * cv + "░" * (14 - cv)
+        # Center-out bars — same logic as signal bars
+        HALF = 14
+        lean_yes = yp >= 0.5
+        bar_c    = "#00ff88" if lean_yes else "#ff3b5c"
         conv_c   = "#00ff88" if conv >= 0.65 else "#ffc837" if conv >= 0.4 else "#334455"
 
-        self.query_one("#odds-row", Static).update(
-            f"[dim]NO [/][bold #ffc837]{na*100:.0f}¢[/]  [{nev_c}]EV {nev:+.3f}[/]"
-            f"   {prob_bar}   "
-            f"[dim]YES [/][bold #00ff88]{ya*100:.0f}¢[/]  [{yev_c}]EV {yev:+.3f}[/]\n"
-            f"\n"
-            f"[dim]PROB  NO [/][#ff3b5c]{np_*100:.0f}%[/]   "
-            f"[dim]CONV [/][{conv_c}]{conv_bar}[/] [bold white]{conv:.2f}[/]   "
-            f"[dim]YES [/][#00ff88]{yp*100:.0f}%[/]"
-        )
+        prob_fill = min(HALF, int(abs(yp - 0.5) * 2 * HALF))
+        conv_fill = min(HALF, int(conv * HALF))
+
+        def center_bar(fill: int, color: str) -> Text:
+            t = Text(no_wrap=True)
+            if lean_yes:
+                t.append("░" * HALF,            style="#1a2535")
+                t.append("█" * fill,             style=f"bold {color}")
+                t.append("░" * (HALF - fill),    style="#1a2535")
+            else:
+                t.append("░" * (HALF - fill),    style="#1a2535")
+                t.append("█" * fill,             style=f"bold {color}")
+                t.append("░" * HALF,             style="#1a2535")
+            return t
+
+        odds = Text(no_wrap=True)
+        odds.append("NO ",         style="dim")
+        odds.append(f"{na*100:.0f}¢  ", style="bold #ffc837")
+        odds.append(f"EV {nev:+.3f}   ", style=nev_c)
+        odds.append_text(center_bar(prob_fill, bar_c))
+        odds.append("   ")
+        odds.append("YES ",        style="dim")
+        odds.append(f"{ya*100:.0f}¢  ", style="bold #00ff88")
+        odds.append(f"EV {yev:+.3f}", style=yev_c)
+        odds.append("\n\n")
+        odds.append("PROB  NO ",   style="dim")
+        odds.append(f"{np_*100:.0f}%   ", style="#ff3b5c")
+        odds.append("CONV  ",      style="dim")
+        odds.append_text(center_bar(conv_fill, conv_c))
+        odds.append(f"  {conv:.2f}   ", style="bold white")
+        odds.append("YES ",        style="dim")
+        odds.append(f"{yp*100:.0f}%", style="#00ff88")
+
+        self.query_one("#odds-row", Static).update(odds)
 
         # Position panel
         pos = s.get("position")
