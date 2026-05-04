@@ -453,7 +453,7 @@ BrailleChart {
     padding: 0 1; margin: 0 0 1 0;
 }
 #sig-panel {
-    height: 9; border: solid #1a2535;
+    height: 13; border: solid #1a2535;
     background: #080c14; padding: 1 1; margin: 0 0 1 0;
 }
 #bot-log {
@@ -781,8 +781,12 @@ class BTCKillerApp(App):
         yev_c = "#00ff88" if yev > 0.02 else "#ff3b5c" if yev < -0.02 else "#ffc837"
         nev_c = "#00ff88" if nev > 0.02 else "#ff3b5c" if nev < -0.02 else "#ffc837"
 
-        bar_w = 20
-        nf = int(np_ * bar_w); yf = bar_w - nf
+        bar_w = 24
+        # Market ask bar — moves live with ask prices (ya/na are the raw market cents)
+        mkt_no_pct  = na / (ya + na) if (ya + na) > 0 else 0.5
+        mkt_yes_pct = 1.0 - mkt_no_pct
+        nf = int(mkt_no_pct  * bar_w)
+        yf = bar_w - nf
         prob_bar = f"[#ff3b5c]{'█'*nf}[/][#00ff88]{'█'*yf}[/]"
 
         cv = int(conv * 14)
@@ -832,28 +836,30 @@ class BTCKillerApp(App):
             f"  {tc_(s.get('trend_24h'),'24H')}  {rng_s}  {vol_s}"
         )
 
-        # Signals — uses yes_prob (0-1) and strength (0-1), exactly like web dashboard
-        raw = s.get("signals", [])
-        HALF = 11   # half-bar width each side
+        # Signals — yes_prob (0-1) + strength (0-1), center-out bar like web dashboard
+        raw  = s.get("signals", [])
+        HALF = 12   # half-bar each side = 24 total
         sigs = ["[bold #ffc837]◈ SIGNALS[/]"]
         for sg in raw[:7]:
-            nm   = sg.get("name", "?")[:14]
+            nm   = sg.get("name",     "?")[:13]
             yp   = sg.get("yes_prob", 0.5)
             str_ = sg.get("strength", 0.0)
-            rsn  = sg.get("reason", "")[:34]
+            rsn  = sg.get("reason",   "")[:28]
             pct  = int(yp * 100)
-            # Bar: center-out, green=YES right, red=NO left  (matches web dash)
-            fill = int(abs(yp - 0.5) * 2 * HALF * (0.4 + str_ * 0.6))
-            fill = min(fill, HALF)
+            fill = min(HALF, int(abs(yp - 0.5) * 2 * HALF * (0.4 + str_ * 0.6)))
             if yp >= 0.5:
-                bar  = "░" * HALF + "[#00ff88]" + "█" * fill + "[/]" + "░" * (HALF - fill)
-                pc   = "#00ff88" if yp > 0.55 else "#ffc837"
+                bar = ("░" * HALF
+                       + f"[#00ff88]{'█' * fill}[/]"
+                       + "░" * (HALF - fill))
+                pc  = "#00ff88" if yp > 0.55 else "#ffc837"
             else:
-                bar  = "░" * (HALF - fill) + "[#ff3b5c]" + "█" * fill + "[/]" + "░" * HALF
-                pc   = "#ff3b5c" if yp < 0.45 else "#ffc837"
-            sigs.append(
-                f" [dim]{nm:<14}[/] {bar} [{pc}]{pct}%[/] [dim]{rsn}[/]"
-            )
+                bar = ("░" * (HALF - fill)
+                       + f"[#ff3b5c]{'█' * fill}[/]"
+                       + "░" * HALF)
+                pc  = "#ff3b5c" if yp < 0.45 else "#ffc837"
+            # Two lines per signal: bar row + reason row (no wrapping)
+            sigs.append(f" [dim]{nm:<13}[/] {bar} [{pc}]{pct}%[/]")
+            sigs.append(f"   [dim #334455]{rsn}[/]")
         if not raw:
             sigs.append(" [dim]waiting for market data…[/]")
         self.query_one("#sig-panel", Static).update("\n".join(sigs))
