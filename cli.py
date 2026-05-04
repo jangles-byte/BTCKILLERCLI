@@ -363,9 +363,9 @@ class BrailleChart(Widget):
 
 
 class ASCIIBanner(Widget):
-    """Ticker animation on $ faces — structural chars stay static."""
-    _TICKER = "0123456789BTCKILER$"
-    _TICK   = 0.07   # ~14 fps
+    """Ticker animation — $ faces cycle BTC$, Rich handles centering."""
+    _TICKER = "BTC$"
+    _TICK   = 0.10
     _frame: int = 0
 
     def on_mount(self) -> None:
@@ -376,18 +376,12 @@ class ASCIIBanner(Widget):
         self.refresh()
 
     def render(self) -> RenderableType:
-        art_w  = max(len(l) for l in _BANNER_LINES)
-        pad    = max(0, (self.size.width - art_w) // 2)
-        spaces = " " * pad
         tl     = len(self._TICKER)
         result = Text(no_wrap=True, overflow="crop")
-        for r, line in enumerate(_BANNER_LINES):
-            result.append(spaces)
+        for line in _BANNER_LINES:
             for c, ch in enumerate(line):
                 if ch == "$":
-                    # Each column is phase-shifted so adjacent $s scroll out of sync
-                    ticker_ch = self._TICKER[(self._frame + c) % tl]
-                    result.append(ticker_ch, style="bold #00ff88")
+                    result.append(self._TICKER[(self._frame + c) % tl], style="bold #00ff88")
                 elif ch in "╱╲│":
                     result.append(ch, style="#009944")
                 elif ch == "_":
@@ -397,7 +391,8 @@ class ASCIIBanner(Widget):
                 else:
                     result.append(ch, style="#005522")
             result.append("\n")
-        return result
+        # Rich Align handles horizontal centering from actual widget width
+        return Align.center(result, vertical="middle")
 
 
 CSS = """
