@@ -397,16 +397,17 @@ Input {
 Input:focus { border: solid #ffc837; color: #fff; }
 .prev     { color: #2a3a4a; height: 1; }
 .sub-wrap { padding: 0; margin: 0; }
-#start-btn {
-    width: 1fr; height: 3; background: #001a10;
-    color: #00ff88; border: solid #00883a; margin: 0 1 1 0;
+#toggle-btn {
+    width: 1fr; height: 3; margin: 0 1 1 0;
 }
-#start-btn:hover { background: #003320; }
-#stop-btn {
-    width: 1fr; height: 3; background: #1a0008;
-    color: #ff3b5c; border: solid #882030; margin: 0 1 1 0;
+#toggle-btn.start-state {
+    background: #001a10; color: #00ff88; border: solid #00883a;
 }
-#stop-btn:hover { background: #2a0010; }
+#toggle-btn.start-state:hover { background: #003320; }
+#toggle-btn.stop-state {
+    background: #1a0008; color: #ff3b5c; border: solid #882030;
+}
+#toggle-btn.stop-state:hover { background: #2a0010; }
 #setup-btn {
     width: 5; height: 3; background: #0a0f1a;
     color: #ffc837; border: solid #443300; margin: 0 0 1 0;
@@ -502,9 +503,8 @@ class BTCKillerApp(App):
             with ScrollableContainer(id="settings"):
                 yield Static("◈ BOT", classes="sec")
                 with Horizontal(classes="tr"):
-                    yield Button("▶ Start", id="start-btn")
-                    yield Button("■ Stop",  id="stop-btn")
-                    yield Button("⚙",      id="setup-btn")
+                    yield Button("▶  Start", id="toggle-btn", classes="start-state")
+                    yield Button("⚙",        id="setup-btn")
                 yield Static("", id="bot-status")
 
                 yield Static("◈ MODE", classes="sec")
@@ -674,26 +674,36 @@ class BTCKillerApp(App):
             b.remove_class("tog"); b.add_class("ton")
         except Exception: pass
 
+    def _val(self, sel: str, default: float) -> float:
+        """Safe float read from an Input widget."""
+        try:
+            v = self.query_one(sel, Input).value
+            return float(v) if v else default
+        except Exception:
+            return default
+
     def _save(self) -> None:
         AGGR = ["selective", "balanced", "aggressive"]
         try:
             write_cfg({
-                "mode":                  "always" if self._top_mode == "always" else AGGR[self._aggr],
-                "wager_mode":            self._wager_mode,
-                "min_bet":               float(self.query_one("#min-bet",       Input).value or 1),
-                "max_market_wager":      float(self.query_one("#max-bet",       Input).value or 5),
-                "kelly_enabled":         self._kelly_on,
-                "kelly_fraction":        float(self.query_one("#kelly-frac",    Input).value or 0.5),
-                "hard_stop_enabled":     self._loss_mode == "hard_stop",
-                "hard_stop_balance":     float(self.query_one("#hard-stop-amt", Input).value or 20),
-                "daily_loss_limit":      float(self.query_one("#loss-limit",    Input).value or 50),
-                "loss_period":           self._loss_period,
-                "always_open_window":    float(self.query_one("#always-open",   Input).value or 6),
-                "always_close_window":   float(self.query_one("#always-close",  Input).value or 3),
-                "always_price_cap":      float(self.query_one("#always-price",  Input).value or 75),
-                "always_entry_method":   self._always_entry,
+                "mode":               "always" if self._top_mode == "always" else AGGR[self._aggr],
+                "wager_mode":         self._wager_mode,
+                "min_bet":            self._val("#min-bet",       1.0),
+                "max_market_wager":   self._val("#max-bet",       5.0),
+                "kelly_enabled":      self._kelly_on,
+                "kelly_fraction":     self._val("#kelly-frac",    0.5),
+                "hard_stop_enabled":  self._loss_mode == "hard_stop",
+                "hard_stop_balance":  self._val("#hard-stop-amt", 20.0),
+                "daily_loss_limit":   self._val("#loss-limit",    50.0),
+                "loss_period":        self._loss_period,
+                "always_open_window": self._val("#always-open",   6.0),
+                "always_close_window":self._val("#always-close",  3.0),
+                "always_price_cap":   self._val("#always-price",  75.0),
+                "always_entry_method":self._always_entry,
             })
-        except Exception: pass
+            self.notify("✓ Saved", severity="information", timeout=1)
+        except Exception as e:
+            self.notify(f"Save failed: {e}", severity="error", timeout=4)
 
     # ── Main tick ────────────────────────────────────────────────────────────
     def _tick(self) -> None:
@@ -703,7 +713,7 @@ class BTCKillerApp(App):
         trades = load_trades_today()
         stats  = compute_stats(trades)
 
-        # Bot status line
+        # Bot status + toggle button
         running = s.get("bot_running", False)
         sc = "#00ff88" if running else "#ff3b5c"
         st = "● RUNNING" if running else "○ STOPPED"
@@ -714,6 +724,13 @@ class BTCKillerApp(App):
             f"[{sc}]{st}[/]  [dim]bal[/] [white]${bal:.2f}[/]"
             f"  [dim]P&L[/] [{pc}]{'+' if pnl>=0 else ''}${pnl:.2f}[/]"
         )
+        btn = self.query_one("#toggle-btn", Button)
+        if running:
+            btn.label = "■  Stop"
+            btn.remove_class("start-state"); btn.add_class("stop-state")
+        else:
+            btn.label = "▶  Start"
+            btn.remove_class("stop-state"); btn.add_class("start-state")
 
         # Wager preview
         try:
@@ -921,10 +938,14 @@ class BTCKillerApp(App):
             self._log_last = lines[-1]
 
     # ── Button handlers ──────────────────────────────────────────────────────
-    @on(Button.Pressed, "#start-btn")
-    def _h_start(self): start_bot(); self.notify("Bot starting…", severity="information")
-    @on(Button.Pressed, "#stop-btn")
-    def _h_stop(self):  stop_bot();  self.notify("Bot stopped.", severity="warning")
+    @on(Button.Pressed, "#toggle-btn")
+    def _h_toggle(self):
+        with state_lock:
+            running = app_state.get("bot_running", False)
+        if running:
+            stop_bot(); self.notify("Bot stopped.", severity="warning")
+        else:
+            start_bot(); self.notify("Bot starting…", severity="information")
 
     @on(Button.Pressed, "#mode-smart")
     def _m_smart(self):
@@ -987,10 +1008,15 @@ class BTCKillerApp(App):
     @on(Input.Submitted)
     def _inp_submit(self, _):
         self._save()
-        self.notify("Saved", severity="information", timeout=1)
 
-    def action_start_bot(self): start_bot(); self.notify("Bot starting…", severity="information")
-    def action_stop_bot(self):  stop_bot();  self.notify("Bot stopped.",   severity="warning")
+    def action_start_bot(self):
+        with state_lock:
+            running = app_state.get("bot_running", False)
+        if running:
+            stop_bot();  self.notify("Bot stopped.",  severity="warning")
+        else:
+            start_bot(); self.notify("Bot starting…", severity="information")
+    def action_stop_bot(self): stop_bot(); self.notify("Bot stopped.", severity="warning")
 
     def action_setup(self) -> None:
         stop_bot()
