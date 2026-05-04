@@ -4,7 +4,7 @@ BTC.KILLER CLI — Full terminal dashboard
 Cosmetic only — bot logic unchanged.
 """
 from __future__ import annotations
-import csv, io, json, os, random, subprocess, sys, threading, time
+import csv, io, json, math, os, random, subprocess, sys, threading, time
 from collections import deque
 from datetime import datetime, date
 from pathlib import Path
@@ -17,15 +17,15 @@ TRADES_DIR = BOT_DIR / "trades"
 
 # ── Banner ───────────────────────────────────────────────────────────────────
 _BANNER_LINES = [
-    r" _______  ________ ______         __    __ __ __ __                           ______  __       ______ ",
-    r"╱       ╲╱        ╱      ╲       ╱  │  ╱  ╱  ╱  ╱  │                         ╱      ╲╱  │     ╱      │",
-    r"$$$$$$$  $$$$$$$$╱$$$$$$  │      $$ │ ╱$$╱$$╱$$ $$ │ ______   ______        ╱$$$$$$  $$ │     $$$$$$╱ ",
-    r"$$ │__$$ │  $$ │ $$ │  $$╱       $$ │╱$$╱ ╱  $$ $$ │╱      ╲ ╱      ╲       $$ │  $$╱$$ │       $$ │  ",
-    r"$$    $$<   $$ │ $$ │            $$  $$<  $$ $$ $$ ╱$$$$$$  ╱$$$$$$  │      $$ │     $$ │       $$ │  ",
-    r"$$$$$$$  │  $$ │ $$ │   __       $$$$$  ╲ $$ $$ $$ $$    $$ $$ │  $$╱       $$ │   __$$ │       $$ │  ",
-    r"$$ │__$$ │  $$ │ $$ ╲__╱  │      $$ │$$  ╲$$ $$ $$ $$$$$$$$╱$$ │            $$ ╲__╱  $$ │_____ _$$ │_ ",
-    r"$$    $$╱   $$ │ $$    $$╱       $$ │ $$  $$ $$ $$ $$       $$ │            $$    $$╱$$       ╱ $$   │",
-    r"$$$$$$$╱    $$╱   $$$$$$╱        $$╱   $$╱$$╱$$╱$$╱ $$$$$$$╱$$╱              $$$$$$╱ $$$$$$$$╱$$$$$$╱",
+    r"__/\\\\\\\\\\\\\____/\\\\\\\\\\\\\\\__/\\\\\\\\\\\\\\\____________/\\\________/\\\________/\\\\\\_____/\\\\\\__________________________________________________/\\\\\\\\\__/\\\______________/\\\\\\\\\\\_",
+    r" _\/\\\/////////\\\_\///////\\\/////__\/\\\///////////____________\/\\\_____/\\\//________\////\\\____\////\\\_______________________________________________/\\\////////__\/\\\_____________\/////\\\///__",
+    r"  _\/\\\_______\/\\\_______\/\\\_______\/\\\_______________________\/\\\__/\\\//______/\\\____\/\\\_______\/\\\_____________________________________________/\\\/___________\/\\\_________________\/\\\_____",
+    r"   _\/\\\\\\\\\\\\\\________\/\\\_______\/\\\\\\\\\\\_______________\/\\\\\\//\\\_____\///_____\/\\\_______\/\\\________/\\\\\\\\___/\\/\\\\\\\_____________/\\\_____________\/\\\_________________\/\\\_____",
+    r"    _\/\\\/////////\\\_______\/\\\_______\/\\\///////________________\/\\\//_\//\\\_____/\\\____\/\\\_______\/\\\______/\\\/////\\\_\/\\\/////\\\___________\/\\\_____________\/\\\_________________\/\\\_____",
+    r"     _\/\\\_______\/\\\_______\/\\\_______\/\\\_______________________\/\\\____\//\\\___\/\\\____\/\\\_______\/\\\_____/\\\\\\\\\\\__\/\\\___\///____________\//\\\____________\/\\\_________________\/\\\_____",
+    r"      _\/\\\_______\/\\\_______\/\\\_______\/\\\_______________________\/\\\_____\//\\\__\/\\\____\/\\\_______\/\\\____\//\\///////___\/\\\____________________\///\\\__________\/\\\_________________\/\\\_____",
+    r"       _\/\\\\\\\\\\\\\/________\/\\\_______\/\\\\\\\\\\\\\\\___________\/\\\______\//\\\_\/\\\__/\\\\\\\\\__/\\\\\\\\\__\//\\\\\\\\\\_\/\\\______________________\////\\\\\\\\\_\/\\\\\\\\\\\\\\\__/\\\\\\\\\\\_",
+    r"        _\/////////////__________\///________\///////////////____________\///________\///__\///__\/////////__\/////////____\//////////__\///__________________________\/////////__\///////////////__\///////////__",
 ]
 
 # ── Shared state ─────────────────────────────────────────────────────────────
@@ -158,6 +158,26 @@ def stop_bot() -> None:
 # Uses the local `claude` CLI (Claude Code) — no API key needed, uses your subscription.
 _PROTECTED_SETTINGS = {"daily_loss_limit", "hard_stop_balance", "hard_stop_enabled"}
 
+# Normalize common Claude key-name mistakes → actual bot_config.json keys
+_CFG_KEY_ALIASES: dict[str, str] = {
+    "always_open_window":  "always_open",
+    "always_close_window": "always_close",
+    "open_window":         "always_open",
+    "close_window":        "always_close",
+    "max_market_wager":    "max_session_wager",
+    "max_wager":           "max_session_wager",
+    "max_bet":             "max_session_wager",
+    "wager_limit":         "max_session_wager",
+    "kelly_frac":          "kelly_fraction",
+    "kelly_f":             "kelly_fraction",
+    "loss_limit":          "daily_loss_limit",
+    "max_price":           "always_max_price",
+    "price_limit":         "always_max_price",
+    "price_cap":           "always_max_price",
+    "trigger":             "trigger_method",
+    "min_conviction":      "min_bet",
+}
+
 def _claude_ask(query: str, state: dict, cfg: dict, log_cb, apply_cb,
                 firepower: bool = False, fire_cb=None,
                 trades: list | None = None, recent_log: list | None = None) -> None:
@@ -271,6 +291,7 @@ You are an active trading co-pilot, not a chatbot. Be direct, specific, and data
             display  = parts[0].strip()
             try:
                 changes = json.loads(parts[1].strip())
+                changes = {_CFG_KEY_ALIASES.get(k, k): v for k, v in changes.items()}
                 safe    = {k: v for k, v in changes.items() if k not in _PROTECTED_SETTINGS}
                 if safe:
                     apply_cb(safe)
@@ -561,9 +582,8 @@ class BrailleChart(Widget):
 
 
 class ASCIIBanner(Widget):
-    """Ticker animation — $ faces cycle BTC$, Rich handles centering."""
-    _TICKER = "BTC$"
-    _TICK   = 0.10
+    """Banner with live price-wave animation through the underscore baselines."""
+    _TICK  = 0.07
     _frame: int = 0
 
     def on_mount(self) -> None:
@@ -574,22 +594,30 @@ class ASCIIBanner(Widget):
         self.refresh()
 
     def render(self) -> RenderableType:
-        tl     = len(self._TICKER)
+        f      = self._frame
         result = Text(no_wrap=True, overflow="crop")
+
         for line in _BANNER_LINES:
             for c, ch in enumerate(line):
-                if ch == "$":
-                    result.append(self._TICKER[(self._frame + c) % tl], style="bold #00ff88")
-                elif ch in "╱╲│":
+                if ch == '_':
+                    # Two-frequency wave → realistic price-like ripple
+                    wave = (math.sin(c * 0.11 + f * 0.22) * 0.6 +
+                            math.sin(c * 0.25 + f * 0.13) * 0.4)
+                    if   wave >  0.55: result.append(ch, style="bold #00ff88")
+                    elif wave >  0.20: result.append(ch, style="#00cc55")
+                    elif wave > -0.20: result.append(ch, style="#006633")
+                    elif wave > -0.55: result.append(ch, style="#003311")
+                    else:              result.append(ch, style="#001a08")
+                elif ch == '/':
+                    result.append(ch, style="#00bb55")
+                elif ch == '\\':
                     result.append(ch, style="#009944")
-                elif ch == "_":
-                    result.append(ch, style="#006633")
-                elif ch == "<":
-                    result.append(ch, style="#007733")
+                elif ch == ' ':
+                    result.append(ch)
                 else:
-                    result.append(ch, style="#005522")
+                    result.append(ch, style="#004422")
             result.append("\n")
-        # Rich Align handles horizontal centering from actual widget width
+
         return Align.center(result, vertical="middle")
 
 
@@ -737,6 +765,8 @@ class BTCKillerApp(App):
 
     _log_n: int = 0
     _log_last: str = ""
+    _monitor_tick: int = 0
+    _MONITOR_EVERY: int = 900   # auto-monitor every 15 minutes (~1 per market window)
 
     # Settings state
     _top_mode:    str  = "smart"
@@ -1267,6 +1297,39 @@ class BTCKillerApp(App):
                     log.write(f"[dim]{l}[/dim]")
             self._log_n = len(lines)
 
+        # ── Auto-monitor: Claude proactively checks in every 5 min ───────────
+        self._monitor_tick += 1
+        if self._monitor_tick >= self._MONITOR_EVERY:
+            self._monitor_tick = 0
+            self._auto_monitor()
+
+    def _auto_monitor(self) -> None:
+        """Fire a background Claude call to proactively monitor the session."""
+        with state_lock:
+            snap = dict(app_state)
+        if not snap.get("bot_running") and not snap.get("market_ticker"):
+            return   # nothing to monitor yet
+        log = self.query_one("#claude-log", RichLog)
+        log.write("[dim #4a9eff]◈ auto-monitor check…[/]")
+        cfg_snap    = read_cfg()
+        trades_snap = load_trades_today()
+        log_snap    = list(bot_log_buffer)
+        fp = self._firepower
+        threading.Thread(
+            target=_claude_ask,
+            args=(
+                "Proactive monitor check. Review all current data and flag anything worth acting on. Be concise.",
+                snap, cfg_snap,
+                lambda txt: self.call_from_thread(log.write, txt),
+                lambda c:   self.call_from_thread(self._apply_settings, c),
+                fp,
+                lambda: self.call_from_thread(self._fire_bot_from_claude),
+                trades_snap,
+                log_snap,
+            ),
+            daemon=True,
+        ).start()
+
     # ── Button handlers ──────────────────────────────────────────────────────
     @on(Button.Pressed, "#toggle-btn")
     def _h_toggle(self):
@@ -1341,12 +1404,15 @@ class BTCKillerApp(App):
 
     def _apply_settings(self, changes: dict) -> None:
         """Write Claude-requested setting changes and reload UI."""
+        changes = {_CFG_KEY_ALIASES.get(k, k): v for k, v in changes.items()}
         safe = {k: v for k, v in changes.items() if k not in _PROTECTED_SETTINGS}
         if not safe:
             return
         try:
             write_cfg(safe)
             self._load_settings()
+            keys = ", ".join(safe.keys())
+            self.notify(f"⚙ Applied: {keys}", severity="information", timeout=4)
         except Exception as e:
             self.notify(f"Apply failed: {e}", severity="error")
 
