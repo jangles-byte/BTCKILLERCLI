@@ -239,7 +239,9 @@ def background_updater() -> None:
 
 # ── Braille chart ─────────────────────────────────────────────────────────────
 def _braille_chart(values: list[float], width: int, height: int,
-                   target: float | None = None) -> "Text":
+                   target: float | None = None,
+                   dist_label: str | None = None,
+                   dist_top: bool = True) -> "Text":
     from rich.text import Text
 
     if not values or width < 4 or height < 2:
@@ -315,18 +317,23 @@ def _braille_chart(values: list[float], width: int, height: int,
         # Side labels  (must use style= arg, NOT markup strings inside append)
         tgt_row = to_px(target) // 4 if (target is not None and v_min < target < v_max) else -1
         if cr == 0:
-            result.append(f" {v_max:,.0f}", style="dim #667788")
+            if dist_label and dist_top:
+                result.append(f" ▲ {dist_label}", style="bold #ffc837")
+            else:
+                result.append(f" {v_max:,.0f}", style="dim #667788")
         elif cr == cur_row:
             btc_now = values[-1] if values else 0
             result.append(f" ◀ ${btc_now:,.0f}", style="bold #00ff88")
         elif cr == tgt_row:
             result.append(f" ── target ${target:,.0f}", style="#ffc837")
         elif target is not None and cr == 1 and tgt_row == -1:
-            # target out of chart range — pin label to top so it's always visible
             arrow = "▲" if target > (values[-1] if values else 0) else "▼"
             result.append(f" {arrow} target ${target:,.0f} (off-chart)", style="dim #ffc837")
         elif cr == height - 1:
-            result.append(f" {v_min:,.0f}", style="dim #667788")
+            if dist_label and not dist_top:
+                result.append(f" ▼ {dist_label}", style="bold #ffc837")
+            else:
+                result.append(f" {v_min:,.0f}", style="dim #667788")
 
         result.append("\n")
 
@@ -352,14 +359,17 @@ from rich.text import Text
 from rich.align import Align
 
 class BrailleChart(Widget):
-    prices: reactive[list[float]] = reactive(list, layout=True)
-    target: reactive[float | None] = reactive(None, layout=True)
+    prices:     reactive[list[float]]  = reactive(list,  layout=True)
+    target:     reactive[float | None] = reactive(None,  layout=True)
+    dist_label: reactive[str | None]   = reactive(None,  layout=True)
+    dist_top:   reactive[bool]         = reactive(True,  layout=True)
 
     def render(self) -> RenderableType:
         w = self.size.width - 2
         h = self.size.height - 2
         if w < 2 or h < 2: return Text("")
-        return _braille_chart(self.prices, w, h, self.target)
+        return _braille_chart(self.prices, w, h, self.target,
+                              self.dist_label, self.dist_top)
 
 
 class ASCIIBanner(Widget):
@@ -478,9 +488,10 @@ BrailleChart {
     content-align: center middle; text-align: center;
 }
 #pos-panel {
-    height: 2; border: solid #1a2535;
-    background: #080c14; padding: 0 2;
+    height: 4; border: solid #ffc837;
+    background: #0d0e05; padding: 0 2;
     content-align: center middle; text-align: center;
+    margin: 0 0 1 0;
 }
 
 /* ─────────────────────────────────────────────
@@ -661,7 +672,7 @@ class BTCKillerApp(App):
         if wm == "percent":
             self._tog2("wager-dollar", "wager-pct")
         self._inp("#min-bet",    str(cfg.get("min_bet", 1.0)))
-        self._inp("#max-bet",    str(cfg.get("max_market_wager", 5.0)))
+        self._inp("#max-bet",    str(cfg.get("max_session_wager", 5.0)))
 
         ke = bool(cfg.get("kelly_enabled", False))
         self._kelly_on = ke
@@ -683,10 +694,10 @@ class BTCKillerApp(App):
         self._loss_period = lp
         self._tog_grp("period-row", f"per-{lp}")
 
-        self._inp("#always-open",  str(cfg.get("always_open_window", 6.0)))
-        self._inp("#always-close", str(cfg.get("always_close_window", 3.0)))
-        self._inp("#always-price", str(cfg.get("always_price_cap", 75)))
-        ae = cfg.get("always_entry_method", "ev")
+        self._inp("#always-open",  str(cfg.get("always_open",     6.0)))
+        self._inp("#always-close", str(cfg.get("always_close",    3.0)))
+        self._inp("#always-price", str(cfg.get("always_max_price", 0.75)))
+        ae = cfg.get("trigger_method", "ev")
         self._always_entry = ae
         if ae == "signal":
             self._tog2("entry-ev", "entry-sig")
@@ -730,17 +741,17 @@ class BTCKillerApp(App):
                 "mode":               "always" if self._top_mode == "always" else AGGR[self._aggr],
                 "wager_mode":         self._wager_mode,
                 "min_bet":            self._val("#min-bet",       1.0),
-                "max_market_wager":   self._val("#max-bet",       5.0),
+                "max_session_wager":  self._val("#max-bet",       5.0),
                 "kelly_enabled":      self._kelly_on,
                 "kelly_fraction":     self._val("#kelly-frac",    0.5),
                 "hard_stop_enabled":  self._loss_mode == "hard_stop",
                 "hard_stop_balance":  self._val("#hard-stop-amt", 20.0),
                 "daily_loss_limit":   self._val("#loss-limit",    50.0),
                 "loss_period":        self._loss_period,
-                "always_open_window": self._val("#always-open",   6.0),
-                "always_close_window":self._val("#always-close",  3.0),
-                "always_price_cap":   self._val("#always-price",  75.0),
-                "always_entry_method":self._always_entry,
+                "always_open":        self._val("#always-open",   6.0),
+                "always_close":       self._val("#always-close",  3.0),
+                "always_max_price":   self._val("#always-price",  0.75),
+                "trigger_method":     self._always_entry,
             })
             self.notify("✓ Saved", severity="information", timeout=1)
         except Exception as e:
@@ -780,19 +791,25 @@ class BTCKillerApp(App):
                 self.query_one("#wager-preview").update(f"[dim]≈ ${mb/100*bal:.2f} per trade[/]")
         except Exception: pass
 
-        # Chart
+        # Chart + distance label
         hist = s.get("price_history", [])
+        btc  = s.get("btc_price") or 0
+        tgt  = s.get("target_price")
+        tdir = s.get("target_dir", "") or ""
         if hist:
             chart = self.query_one("#chart", BrailleChart)
             chart.prices = hist
-            chart.target = s.get("target_price")
+            chart.target = tgt
+            if btc and tgt:
+                dist_amt = abs(btc - tgt)
+                chart.dist_label = f"${dist_amt:,.0f} to target"
+                chart.dist_top   = tgt > btc   # target above → label at top
+            else:
+                chart.dist_label = None
 
         # Market row
         ticker = s.get("market_ticker") or "—"
         secs   = int(s.get("secs_remaining") or 0)
-        btc    = s.get("btc_price") or 0
-        tgt    = s.get("target_price")
-        tdir   = s.get("target_dir", "") or ""
         m, ss  = secs // 60, secs % 60
         tc     = "#ff3b5c" if secs < 60 else "#ffc837" if secs < 180 else "#00ff88"
 
@@ -862,20 +879,23 @@ class BTCKillerApp(App):
             f"[dim]YES [/][{yev_c}]{yp*100:.0f}%[/]"
         )
 
-        # Position
+        # Position panel
         pos = s.get("position")
         pp  = self.query_one("#pos-panel", Static)
         if pos and pos.get("ticker"):
-            side  = pos.get("side","?").upper()
-            sc2   = "#00ff88" if side=="YES" else "#ffc837"
+            side  = pos.get("side", "?").upper()
+            sc2   = "#00ff88" if side == "YES" else "#ffc837"
             pmins = pos.get("mins_remaining", 0)
-            ptc   = "#ff3b5c" if pmins < 2 else "white"
+            ptc   = "#ff3b5c" if pmins < 2 else "#ffc837" if pmins < 4 else "white"
+            qty   = pos.get("contracts", 0)
+            cost  = pos.get("cost", 0)
+            entry = pos.get("entry", 0)
             pp.update(
-                f" [dim]POSITION[/] [{sc2}]● {side}[/]"
-                f"  [dim]entry[/] [white]{pos.get('entry',0):.3f}[/]"
-                f"  [dim]qty[/] [white]{pos.get('contracts',0)}[/]"
-                f"  [dim]cost[/] [white]${pos.get('cost',0):.2f}[/]"
-                f"  [dim]expires[/] [{ptc}]{pmins:.1f}m[/]"
+                f"[bold {sc2}]● OPEN POSITION — {side}[/]\n"
+                f"[dim]  entry [/][white]{entry:.2f}¢[/]"
+                f"  [dim]qty [/][white]{qty}[/]"
+                f"  [dim]cost [/][white]${cost:.2f}[/]"
+                f"  [dim]expires [/][{ptc}]⏱ {pmins:.1f} min[/]"
             )
             pp.display = True
         else:
