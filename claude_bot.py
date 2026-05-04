@@ -263,13 +263,102 @@ def get_raw_signals():
     except Exception:
         return {}
 
+# ── External free signal sources ──────────────────────────────────────────────
+
+def fetch_external_signals() -> str:
+    """
+    Pull free external BTC signals before each Claude decision.
+    No API keys required. Fails gracefully — never blocks a decision.
+    Sources: Fear & Greed index, CoinGecko 24h data, Reddit r/Bitcoin hot posts.
+    """
+    lines = []
+
+    # 1. Fear & Greed Index (alternative.me — always free, no key)
+    try:
+        r = requests.get(
+            "https://api.alternative.me/fng/?limit=3",
+            timeout=4, headers={"User-Agent": "BTC-Killer-Bot/1.0"}
+        )
+        data = r.json().get("data", [])
+        if data:
+            today = data[0]
+            lines.append(
+                f"Fear & Greed: {today['value']} / 100  ({today['value_classification']})"
+                + (f"  |  yesterday: {data[1]['value']} ({data[1]['value_classification']})"
+                   if len(data) > 1 else "")
+            )
+    except Exception as e:
+        lines.append(f"Fear & Greed: unavailable ({e})")
+
+    # 2. CoinGecko BTC market data (free public API, no key)
+    try:
+        r = requests.get(
+            "https://api.coingecko.com/api/v3/simple/price",
+            params={
+                "ids": "bitcoin",
+                "vs_currencies": "usd",
+                "include_24hr_change": "true",
+                "include_24hr_vol": "true",
+                "include_market_cap": "true",
+            },
+            timeout=4, headers={"User-Agent": "BTC-Killer-Bot/1.0"}
+        )
+        btc = r.json().get("bitcoin", {})
+        chg = btc.get("usd_24h_change", 0)
+        vol = btc.get("usd_24h_vol", 0)
+        mcap = btc.get("usd_market_cap", 0)
+        lines.append(
+            f"CoinGecko 24h: {chg:+.2f}%  "
+            f"vol=${vol/1e9:.1f}B  "
+            f"mcap=${mcap/1e9:.0f}B"
+        )
+    except Exception as e:
+        lines.append(f"CoinGecko: unavailable ({e})")
+
+    # 3. Reddit r/Bitcoin hot posts (free JSON endpoint, no key)
+    try:
+        r = requests.get(
+            "https://www.reddit.com/r/Bitcoin/hot.json?limit=5",
+            timeout=4, headers={"User-Agent": "BTC-Killer-Bot/1.0"}
+        )
+        posts = r.json().get("data", {}).get("children", [])
+        if posts:
+            lines.append("Reddit r/Bitcoin top posts:")
+            for p in posts[:4]:
+                d = p.get("data", {})
+                title = d.get("title", "")[:80]
+                score = d.get("score", 0)
+                lines.append(f"  [{score:,} pts] {title}")
+    except Exception as e:
+        lines.append(f"Reddit: unavailable ({e})")
+
+    # 4. Reddit r/CryptoCurrency for broader sentiment
+    try:
+        r = requests.get(
+            "https://www.reddit.com/r/CryptoCurrency/search.json"
+            "?q=bitcoin&sort=new&limit=3&t=hour",
+            timeout=4, headers={"User-Agent": "BTC-Killer-Bot/1.0"}
+        )
+        posts = r.json().get("data", {}).get("children", [])
+        if posts:
+            lines.append("Reddit r/CryptoCurrency (last hour, BTC):")
+            for p in posts[:3]:
+                d = p.get("data", {})
+                title = d.get("title", "")[:80]
+                lines.append(f"  {title}")
+    except Exception:
+        pass  # skip silently if this one fails
+
+    return "\n".join(lines) if lines else "  (all external sources unavailable)"
+
 # ── Claude decision engine ─────────────────────────────────────────────────
 
 def ask_claude(ticker, mins_rem, yes_ask, no_ask, strike, strike_dir,
                balance, budget, pnl_today, daily_loss_limit,
                wallet_floor, wallet_floor_enabled,
                already_traded, our_side, our_entry, our_contracts,
-               price_history, btc_price, raw_sig):
+               price_history, btc_price, raw_sig,
+               external_signals: str = ""):
     """
     Ask Claude for a trading decision. Returns one of:
       ('hold',)
@@ -323,7 +412,10 @@ def ask_claude(ticker, mins_rem, yes_ask, no_ask, strike, strike_dir,
 
     prompt = f"""You are ClaudeBot — a fully autonomous AI trading agent on Kalshi BTC 15-minute prediction markets. You ARE the bot. You make ALL decisions.
 
-You have access to web search and other tools if you need quick external context (e.g. macro news, BTC sentiment). Use them if relevant before deciding.
+You have access to web search. If the pre-fetched external data below feels stale or you want to dig deeper (breaking news, specific tweet, macro event), run a quick web search before deciding. The external data below is already fetched for you — only search if you need more.
+
+=== EXTERNAL SIGNALS (auto-fetched: Fear & Greed, CoinGecko, Reddit) ===
+{external_signals}
 
 === LIVE MARKET ===
 Ticker    : {ticker}
@@ -607,6 +699,11 @@ def run_claude_bot():
             except Exception:
                 raw_sig = {}
 
+            # ── Fetch external signals (Fear & Greed, CoinGecko, Reddit) ──
+            print("  🌐 Fetching external signals...")
+            ext_signals = fetch_external_signals()
+            print(f"  🌐 {ext_signals[:80]}...")
+
             # ── Ask Claude ────────────────────────────────────────────────
             decision = ask_claude(
                 ticker, mins_rem, yes_ask, no_ask, strike, strike_dir,
@@ -615,6 +712,7 @@ def run_claude_bot():
                 market_state["traded"], market_state["our_side"],
                 market_state["our_entry"], market_state["our_contracts"],
                 price_history, btc_price, raw_sig,
+                external_signals=ext_signals,
             )
 
             # ── Execute decision ──────────────────────────────────────────
