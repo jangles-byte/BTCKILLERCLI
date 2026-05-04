@@ -579,7 +579,7 @@ class BTCKillerApp(App):
                         yield Button("Selective",  id="aggr-0", classes="tog")
                         yield Button("Balanced",   id="aggr-1", classes="ton")
                         yield Button("Aggressive", id="aggr-2", classes="tog")
-                with Vertical(id="always-wrap", classes="sub-wrap", display=False):
+                with Vertical(id="always-wrap", classes="sub-wrap"):
                     yield Static("Open window (min left)", classes="lbl")
                     yield Input(value="6.0", id="always-open")
                     yield Static("Close window (min left)", classes="lbl")
@@ -605,7 +605,7 @@ class BTCKillerApp(App):
                 with Horizontal(classes="tr", id="kelly-row"):
                     yield Button("ON",  id="kelly-on",  classes="tog")
                     yield Button("OFF", id="kelly-off", classes="ton")
-                with Vertical(id="kelly-wrap", classes="sub-wrap", display=False):
+                with Vertical(id="kelly-wrap", classes="sub-wrap"):
                     yield Static("Fraction (0.05 – 1.0)", classes="lbl")
                     yield Input(value="0.50", id="kelly-frac")
 
@@ -621,7 +621,7 @@ class BTCKillerApp(App):
                         yield Button("Weekly", id="per-weekly", classes="tog")
                     yield Static("Loss limit ($)", classes="lbl")
                     yield Input(value="50", id="loss-limit")
-                with Vertical(id="hardstop-wrap", classes="sub-wrap", display=False):
+                with Vertical(id="hardstop-wrap", classes="sub-wrap"):
                     yield Static("Floor balance ($)", classes="lbl")
                     yield Input(value="20", id="hard-stop-amt")
 
@@ -657,6 +657,10 @@ class BTCKillerApp(App):
     # ── Mount ────────────────────────────────────────────────────────────────
     def on_mount(self) -> None:
         sys.stdout = _BufferWriter()
+        # Hide sub-panels that are only shown when their parent mode is active
+        self.query_one("#always-wrap").display  = False
+        self.query_one("#kelly-wrap").display   = False
+        self.query_one("#hardstop-wrap").display = False
         self._load_settings()
         self.set_interval(1.0, self._tick)
 
