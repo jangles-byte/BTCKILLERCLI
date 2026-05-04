@@ -16,14 +16,29 @@ POS_FILE   = BOT_DIR / "current_position.json"
 TRADES_DIR = BOT_DIR / "trades"
 
 # ── Banner ───────────────────────────────────────────────────────────────────
-_BTK_BANNER = (
-    " ██████╗ ████████╗ ██████╗    ██╗  ██╗██╗██╗     ██╗     ███████╗██████╗ \n"
-    " ██╔══██╗╚══██╔══╝██╔════╝    ██║ ██╔╝██║██║     ██║     ██╔════╝██╔══██╗\n"
-    " ██████╔╝   ██║   ██║         █████╔╝ ██║██║     ██║     █████╗  ██████╔╝\n"
-    " ██╔══██╗   ██║   ██║         ██╔═██╗ ██║██║     ██║     ██╔══╝  ██╔══██╗\n"
-    " ██████╔╝   ██║   ╚██████╗    ██║  ██╗██║███████╗███████╗███████╗██║  ██║\n"
-    " ╚═════╝    ╚═╝    ╚═════╝    ╚═╝  ╚═╝╚═╝╚══════╝╚══════╝╚══════╝╚═╝  ╚═╝"
-)
+_BANNER_LINES = [
+    "          _____                _____                    _____                            _____                    _____                    _____            _____            _____                    _____          ",
+    r"         /\    \              /\    \                  /\    \                          /\    \                  /\    \                  /\    \          /\    \          /\    \                  /\    \         ",
+    r"        /::\    \            /::\    \                /::\    \                        /::\____\                /::\    \                /::\____\        /::\____\        /::\    \                /::\    \        ",
+    r"       /::::\    \           \:::\    \              /::::\    \                      /:::/    /                \:::\    \              /:::/    /       /:::/    /       /::::\    \              /::::\    \       ",
+    r"      /::::::\    \           \:::\    \            /::::::\    \                    /:::/    /                  \:::\    \            /:::/    /       /:::/    /       /::::::\    \            /::::::\    \      ",
+    r"     /:::/\:::\    \           \:::\    \          /:::/\:::\    \                  /:::/    /                    \:::\    \          /:::/    /       /:::/    /       /:::/\:::\    \          /:::/\:::\    \     ",
+    r"    /:::/__\:::\    \           \:::\    \        /:::/  \:::\    \                /:::/____/                      \:::\    \        /:::/    /       /:::/    /       /:::/__\:::\    \        /:::/__\:::\    \    ",
+    r"   /::::\   \:::\    \          /::::\    \      /:::/    \:::\    \              /::::\    \                      /::::\    \      /:::/    /       /:::/    /       /::::\   \:::\    \      /::::\   \:::\    \   ",
+    r"  /::::::\   \:::\    \        /::::::\    \    /:::/    / \:::\    \            /::::::\____\________    ____    /::::::\    \    /:::/    /       /:::/    /       /::::::\   \:::\    \    /::::::\   \:::\    \  ",
+    r" /:::/\:::\   \:::\ ___\      /:::/\:::\    \  /:::/    /   \:::\    \          /:::/\:::::::::::\    \  /\   \  /:::/\:::\    \  /:::/    /       /:::/    /       /:::/\:::\   \:::\    \  /:::/\:::\   \:::\____\ ",
+    r"/:::/__\:::\   \:::|    |    /:::/  \:::\____\/:::/____/     \:::\____\        /:::/  |:::::::::::\____\/::\   \/:::/  \:::\____\/:::/____/       /:::/____/       /:::/__\:::\   \:::\____\/:::/  \:::\   \:::|    |",
+    r"\:::\   \:::\  /:::|____|   /:::/    \::/    /\:::\    \      \::/    /        \::/   |::|~~~|~~~~~     \:::\  /:::/    \::/    /\:::\    \       \:::\    \       \:::\   \:::\   \::/    /\::/   |::::\  /:::|____|",
+    r" \:::\   \:::\/:::/    /   /:::/    / \/____/  \:::\    \      \/____/          \/____|::|   |           \:::\/:::/    / \/____/  \:::\    \       \:::\    \       \:::\   \:::\   \/____/  \/____|:::::\/ :::/    / ",
+    r"  \:::\   \::::::/    /   /:::/    /            \:::\    \                            |::|   |            \::::::/    /            \:::\    \       \:::\    \       \:::\   \:::\    \            |:::::::::/    /  ",
+    r"   \:::\   \::::/    /   /:::/    /              \:::\    \                           |::|   |             \::::/____/              \:::\    \       \:::\    \       \:::\   \:::\____\           |::|\::::/    /   ",
+    r"    \:::\  /:::/    /    \::/    /                \:::\    \                          |::|   |              \:::\    \               \:::\    \       \:::\    \       \:::\   \::/    /           |::| \::/____/    ",
+    r"     \:::\/:::/    /      \/____/                  \:::\    \                         |::|   |               \:::\    \               \:::\    \       \:::\    \       \:::\   \/____/            |::|  ~|          ",
+    r"      \::::::/    /                                 \:::\    \                        |::|   |                \:::\    \               \:::\    \       \:::\    \       \:::\    \                |::|   |          ",
+    r"       \::::/    /                                   \:::\____\                       \::|   |                 \:::\____\               \:::\____\       \:::\____\       \:::\____\               \::|   |          ",
+    r"        \::/____/                                     \::/    /                        \:|   |                  \::/    /                \::/    /        \::/    /        \::/    /                \:|   |          ",
+    r"         ~~                                            \/____/                          \|___|                   \/____/                  \/____/          \/____/          \/____/                  \|___|",
+]
 
 # ── Shared state ─────────────────────────────────────────────────────────────
 bot_process: subprocess.Popen | None = None
@@ -358,15 +373,53 @@ class BrailleChart(Widget):
         return _braille_chart(self.prices, w, h, self.target)
 
 
+class ASCIIBanner(Widget):
+    """Animated BTC KILLER ASCII art banner — diagonal shimmer sweep."""
+    _col: float = -30.0
+    _SPEED: float = 5.0          # chars per tick
+    _TICK:  float = 0.04         # seconds between ticks
+    _MAX_W: int   = max(len(l) for l in _BANNER_LINES)
+
+    def on_mount(self) -> None:
+        self.set_interval(self._TICK, self._step)
+
+    def _step(self) -> None:
+        self._col += self._SPEED
+        if self._col > self._MAX_W + 60:
+            self._col = -30.0
+        self.refresh()
+
+    def render(self) -> RenderableType:
+        result = Text(overflow="crop", no_wrap=True)
+        for r, line in enumerate(_BANNER_LINES):
+            sweep = self._col - r * 2.8   # diagonal offset per row
+            for c, ch in enumerate(line):
+                if ch == " ":
+                    result.append(ch)
+                else:
+                    dist = abs(c - sweep)
+                    if dist < 2:
+                        result.append(ch, style="bold #00ffcc")
+                    elif dist < 6:
+                        result.append(ch, style="bold #00ff88")
+                    elif dist < 14:
+                        result.append(ch, style="#00bb55")
+                    elif dist < 28:
+                        result.append(ch, style="#006633")
+                    else:
+                        result.append(ch, style="#003322")
+            result.append("\n")
+        return result
+
 
 CSS = """
 Screen { background: #060a12; layout: vertical; }
 
 /* ── Banner ── */
 #banner {
-    height: 6; color: #00ff88; text-style: bold;
-    border-bottom: solid #1a2535; background: #060a12;
-    padding: 0 2; content-align: center middle;
+    height: 21; background: #060a12;
+    border-bottom: solid #1a2535;
+    overflow: hidden; padding: 0 0;
 }
 #main-row { height: 1fr; }
 
@@ -377,9 +430,9 @@ Screen { background: #060a12; layout: vertical; }
     width: 30; background: #080c14;
     border-right: solid #1a2535; padding: 0 1;
 }
-.sec  { color: #ffc837; text-style: bold; height: 1; margin: 1 0 0 0; }
-.lbl  { color: #445566; height: 1; }
-.tr   { height: 3; }
+.sec  { color: #ffc837; text-style: bold; height: 1; margin: 1 0 0 0; padding: 0; }
+.lbl  { color: #445566; height: 1; margin: 0; padding: 0; }
+.tr   { height: 3; margin: 0; }
 .tog  {
     width: 1fr; height: 3; min-width: 0;
     background: #080c14; border: solid #1a2535; color: #334455;
@@ -426,20 +479,24 @@ BrailleChart {
     background: #060a12; margin: 0 0 1 0;
 }
 #mkt-row {
-    height: 3; border: solid #1a2535; background: #080c14;
-    padding: 0 1; margin: 0 0 1 0;
+    height: 4; border: solid #1a2535; background: #080c14;
+    padding: 0 2; margin: 0 0 1 0;
+    content-align: center middle; text-align: center;
 }
 #watch-banner {
     height: 2; color: #ffc837; background: #110e00;
     border: solid #553300; padding: 0 1; margin: 0 0 1 0;
+    content-align: center middle; text-align: center;
 }
 #odds-row {
-    height: 4; border: solid #1a2535;
-    background: #080c14; padding: 0 1; margin: 0 0 1 0;
+    height: 6; border: solid #1a2535;
+    background: #080c14; padding: 0 2; margin: 0 0 1 0;
+    content-align: center middle; text-align: center;
 }
 #pos-panel {
     height: 2; border: solid #1a2535;
-    background: #080c14; padding: 0 1;
+    background: #080c14; padding: 0 2;
+    content-align: center middle; text-align: center;
 }
 
 /* ─────────────────────────────────────────────
@@ -496,7 +553,7 @@ class BTCKillerApp(App):
     _always_entry:str  = "ev"
 
     def compose(self) -> ComposeResult:
-        yield Static(_BTK_BANNER, id="banner")
+        yield ASCIIBanner(id="banner")
         with Horizontal(id="main-row"):
 
             # ── LEFT: settings ──────────────────────────────────────────────
@@ -517,9 +574,9 @@ class BTCKillerApp(App):
                         yield Button("Balanced",   id="aggr-1", classes="ton")
                         yield Button("Aggressive", id="aggr-2", classes="tog")
                 with Vertical(id="always-wrap", classes="sub-wrap"):
-                    yield Static("Open window (min left)", classes="lbl")
+                    yield Static("Open at ≥ X mins left", classes="lbl")
                     yield Input(value="6.0", id="always-open")
-                    yield Static("Close window (min left)", classes="lbl")
+                    yield Static("Close at ≤ X mins left", classes="lbl")
                     yield Input(value="3.0", id="always-close")
                     yield Static("Max price (¢)", classes="lbl")
                     yield Input(value="75",  id="always-price")
@@ -771,9 +828,10 @@ class BTCKillerApp(App):
             dist_str = "[dim]waiting for price data…[/]"
 
         self.query_one("#mkt-row", Static).update(
-            f"[bold #4a9eff]{ticker[-38:]}[/]  [{tc}]⏱ {m}:{ss:02d}[/]  "
-            f"[dim]strike[/] [bold white]{tgt_s}[/]  [dim]BTC[/] [bold white]${btc:,.0f}[/]\n"
-            f" {dist_str}"
+            f"[bold #4a9eff]{ticker[-40:]}[/]   [{tc}]⏱  {m}:{ss:02d}[/]   "
+            f"[dim]STRIKE[/] [bold white]{tgt_s}[/]   [dim]BTC[/] [bold white]${btc:,.0f}[/]\n"
+            f"\n"
+            f"  {dist_str}"
         )
 
         # Watching banner
@@ -811,12 +869,13 @@ class BTCKillerApp(App):
         conv_c   = "#00ff88" if conv >= 0.65 else "#ffc837" if conv >= 0.4 else "#334455"
 
         self.query_one("#odds-row", Static).update(
-            f" [dim]NO [/][bold #ffc837]{na*100:.0f}¢[/] [{nev_c}]EV {nev:+.3f}[/]"
-            f"  {prob_bar}  "
-            f"[dim]YES [/][bold #00ff88]{ya*100:.0f}¢[/] [{yev_c}]EV {yev:+.3f}[/]\n"
-            f" [dim]prob  NO[/] [{nev_c}]{np_*100:.0f}%[/] "
-            f" [dim]conv[/] [{conv_c}]{conv_bar}[/] [white]{conv:.2f}[/] "
-            f" [dim]YES[/] [{yev_c}]{yp*100:.0f}%[/]"
+            f"[dim]NO [/][bold #ffc837]{na*100:.0f}¢[/]  [{nev_c}]EV {nev:+.3f}[/]"
+            f"   {prob_bar}   "
+            f"[dim]YES [/][bold #00ff88]{ya*100:.0f}¢[/]  [{yev_c}]EV {yev:+.3f}[/]\n"
+            f"\n"
+            f"[dim]PROB  NO [/][{nev_c}]{np_*100:.0f}%[/]   "
+            f"[dim]CONV [/][{conv_c}]{conv_bar}[/] [bold white]{conv:.2f}[/]   "
+            f"[dim]YES [/][{yev_c}]{yp*100:.0f}%[/]"
         )
 
         # Position
