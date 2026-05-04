@@ -360,47 +360,41 @@ class BrailleChart(Widget):
 
 
 class ASCIIBanner(Widget):
-    """Matrix-rain glow effect on BTC KILLER banner — centered."""
-    _TICK       = 0.07   # seconds per frame
-    _DECAY      = 0.20   # brightness drop per tick
-    _SPAWN_RATE = 0.045  # probability each non-space char lights up per tick
+    """Slow left-to-right shimmer sweep — centered, subtle."""
+    _TICK  = 0.06          # frame rate
+    _SPEED = 2.0           # chars per tick  (~6 sec full pass)
+    _MAX_W = max(len(l) for l in _BANNER_LINES)
 
     def __init__(self, **kwargs) -> None:
         super().__init__(**kwargs)
-        self._bright: list[list[float]] = [
-            [0.0] * len(line) for line in _BANNER_LINES
-        ]
+        self._col: float = -20.0
 
     def on_mount(self) -> None:
         self.set_interval(self._TICK, self._step)
 
     def _step(self) -> None:
-        for r, line in enumerate(_BANNER_LINES):
-            for c, ch in enumerate(line):
-                if ch != " ":
-                    self._bright[r][c] = max(0.0, self._bright[r][c] - self._DECAY)
-                    if random.random() < self._SPAWN_RATE:
-                        self._bright[r][c] = 1.0
+        self._col += self._SPEED
+        if self._col > self._MAX_W + 40:
+            self._col = -20.0
         self.refresh()
 
     def render(self) -> RenderableType:
-        art_w  = max(len(l) for l in _BANNER_LINES)
+        art_w  = self._MAX_W
         pad    = max(0, (self.size.width - art_w) // 2)
         spaces = " " * pad
         result = Text(overflow="crop", no_wrap=True)
         for r, line in enumerate(_BANNER_LINES):
             result.append(spaces)
+            sweep = self._col - r * 1.2   # gentle diagonal
             for c, ch in enumerate(line):
                 if ch == " ":
                     result.append(ch)
                 else:
-                    b = self._bright[r][c]
-                    if   b > 0.88: result.append(ch, style="bold #00ffcc")
-                    elif b > 0.70: result.append(ch, style="bold #00ff88")
-                    elif b > 0.50: result.append(ch, style="#00dd66")
-                    elif b > 0.30: result.append(ch, style="#009944")
-                    elif b > 0.12: result.append(ch, style="#005528")
-                    else:          result.append(ch, style="#002a14")
+                    dist = abs(c - sweep)
+                    if   dist <  5: result.append(ch, style="bold #00ffaa")
+                    elif dist < 14: result.append(ch, style="#00cc66")
+                    elif dist < 26: result.append(ch, style="#008844")
+                    else:           result.append(ch, style="#004d28")
             result.append("\n")
         return result
 
@@ -423,6 +417,7 @@ Screen { background: #060a12; layout: vertical; }
 #settings {
     width: 30; background: #080c14;
     border-right: solid #1a2535; padding: 0 1;
+    overflow-y: auto; scrollbar-size: 1 1;
 }
 .sec  { color: #ffc837; text-style: bold; height: 1; margin: 1 0 0 0; padding: 0; }
 .lbl  { color: #445566; height: 1; margin: 0; padding: 0; }
@@ -443,7 +438,7 @@ Input {
 }
 Input:focus { border: solid #ffc837; color: #fff; }
 .prev     { color: #2a3a4a; height: 1; }
-.sub-wrap { padding: 0; margin: 0; }
+.sub-wrap { padding: 0; margin: 0; height: auto; }
 #toggle-btn {
     width: 1fr; height: 3; margin: 0 1 1 0;
 }
