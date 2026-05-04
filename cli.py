@@ -159,49 +159,85 @@ def stop_bot() -> None:
 _PROTECTED_SETTINGS = {"daily_loss_limit", "hard_stop_balance", "hard_stop_enabled"}
 
 def _claude_ask(query: str, state: dict, cfg: dict, log_cb, apply_cb,
-                firepower: bool = False, fire_cb=None) -> None:
+                firepower: bool = False, fire_cb=None,
+                trades: list | None = None, recent_log: list | None = None) -> None:
     """Call `claude -p` subprocess with full bot context. Runs in a daemon thread."""
 
     sigs_txt = "\n".join(
-        f"  {sg.get('name','?')}: {sg.get('yes_prob',0.5)*100:.0f}%  str={sg.get('strength',0):.2f}  {sg.get('reason','')}"
+        f"  {sg.get('name','?')}: {sg.get('yes_prob',0.5)*100:.0f}%  "
+        f"str={sg.get('strength',0):.2f}  {sg.get('reason','')}"
         for sg in state.get("signals", [])
     ) or "  none yet"
 
+    # Full config — only block the two hard-limit fields
     safe_cfg = {k: v for k, v in cfg.items() if k not in _PROTECTED_SETTINGS}
 
-    prompt = f"""You are an AI assistant embedded inside a Kalshi BTC prediction market trading bot CLI.
+    # Trade history — last 50 trades today
+    if trades:
+        trades_txt = "\n".join(
+            f"  {t.get('timestamp','?')[:19]}  {t.get('ticker','?')}  "
+            f"{t.get('side','?').upper():3}  qty={t.get('contracts','?')}  "
+            f"entry={t.get('price','?')}  pnl={t.get('pnl','pending')}"
+            for t in trades[-50:]
+        )
+    else:
+        trades_txt = "  no trades today yet"
 
-=== LIVE MARKET STATE ===
-BTC price     : ${state.get('btc_price') or 0:,.2f}
-Strike        : ${state.get('target_price') or 0:,.2f}  ({state.get('target_dir','')})
-Time remaining: {int((state.get('secs_remaining') or 0)//60)}m {int((state.get('secs_remaining') or 0)%60)}s
-YES ask       : {(state.get('yes_ask') or 0)*100:.0f}¢    NO ask: {(state.get('no_ask') or 0)*100:.0f}¢
-Our YES prob  : {state.get('our_yes_prob',0.5)*100:.0f}%   Conviction: {state.get('conviction',0):.2f}
-Bot running   : {state.get('bot_running', False)}
-Balance       : ${state.get('balance') or 0:.2f}
-Signals:
+    # Recent bot log — last 40 lines for context
+    log_txt = "\n".join(f"  {l}" for l in (recent_log or [])[-40:]) or "  (empty)"
+
+    # Position
+    pos = state.get("position") or {}
+    if pos:
+        pos_txt = (f"  {pos.get('side','?').upper()} {pos.get('contracts','?')} contracts  "
+                   f"entry={pos.get('entry','?')}  cost=${pos.get('cost','?')}")
+    else:
+        pos_txt = "  none"
+
+    prompt = f"""You are an AI trading assistant embedded directly inside a live Kalshi BTC prediction market bot. You are NOT a chatbot — you are a co-pilot with full read/write access to the bot's settings and state. You monitor performance, flag issues, recommend adjustments, and execute changes when asked.
+
+=== LIVE MARKET ===
+BTC price      : ${state.get('btc_price') or 0:,.2f}
+Strike         : ${state.get('target_price') or 0:,.2f}  ({state.get('target_dir','')})
+Time remaining : {int((state.get('secs_remaining') or 0)//60)}m {int((state.get('secs_remaining') or 0)%60)}s
+YES ask        : {(state.get('yes_ask') or 0)*100:.0f}¢    NO ask: {(state.get('no_ask') or 0)*100:.0f}¢
+YES EV         : {state.get('yes_ev', 0):.3f}    NO EV: {state.get('no_ev', 0):.3f}
+Our YES prob   : {state.get('our_yes_prob',0.5)*100:.0f}%   NO prob: {state.get('our_no_prob',0.5)*100:.0f}%
+Conviction     : {state.get('conviction',0):.2f}   Confidence: {state.get('confidence',0):.2f}
+Bot running    : {state.get('bot_running', False)}
+Balance        : ${state.get('balance') or 0:.2f}
+Watching       : {state.get('watching_active', False)}  dir={state.get('watching_dir','—')}  thresh={state.get('watching_thresh','—')}
+
+=== SIGNALS ===
 {sigs_txt}
 
-=== CURRENT SETTINGS (you can change these) ===
+=== CURRENT POSITION ===
+{pos_txt}
+
+=== ALL BOT SETTINGS (you can change any of these) ===
 {json.dumps(safe_cfg, indent=2)}
 
-=== PROTECTED (never touch) ===
-daily_loss_limit, hard_stop_balance — do NOT change these.
+=== TODAY'S TRADE HISTORY ===
+{trades_txt}
+
+=== RECENT BOT LOG (last 40 lines) ===
+{log_txt}
+
+=== PROTECTED — NEVER MODIFY ===
+daily_loss_limit and hard_stop_balance are hard safety limits. Do NOT suggest or apply changes to these two fields under any circumstances.
 
 === FIREPOWER ===
 Firepower enabled: {firepower}
-If firepower is ON and you are confident the bot should enter a trade right now,
-you may include FIRE_BOT on its own line at the very end of your response.
-Only do this if the user explicitly asks you to fire, or if conditions are compelling
-AND firepower is enabled. Never include FIRE_BOT if firepower is False.
+If firepower is ON and conditions strongly warrant a trade, you may include FIRE_BOT on its own line at the very end. Only do this if the user explicitly asks, or conditions are exceptionally clear AND firepower is enabled.
 
-=== YOUR JOB ===
-Answer the user's question concisely (2-4 sentences, no markdown).
-If the user asks you to change a setting, include EXACTLY this line at the very end:
-APPLY:{{"key": value, ...}}
-
-Only include APPLY: if explicitly asked to change something.
-Only include FIRE_BOT if firepower is ON and a trade should be fired.
+=== YOUR ROLE ===
+You are an active trading co-pilot, not a chatbot. Be direct, specific, and data-driven.
+- Proactively flag anything concerning you see in the state, log, or trade history
+- Reference specific numbers from the data above, don't speak in generalities
+- Keep responses tight: 3-6 sentences max unless the user asks for detail
+- No markdown formatting (no **, no #, no bullet symbols)
+- If changing a setting, include EXACTLY at the end: APPLY:{{"key": value, ...}}
+- Only include APPLY if making a change; only include FIRE_BOT if firing a trade
 
 === USER ===
 {query}"""
@@ -782,7 +818,7 @@ class BTCKillerApp(App):
                 yield Static("", id="odds-row")
                 yield Static("", id="pos-panel")
                 yield Static(
-                    "[bold #4a9eff]◈ CLAUDE[/]  [dim]ask anything about the bot[/]",
+                    "[bold #4a9eff]◈ CLAUDE[/]  [dim]trading co-pilot — monitors, advises, adjusts[/]",
                     id="claude-header", markup=True,
                 )
                 yield RichLog(id="claude-log", highlight=False, markup=True,
@@ -1271,7 +1307,7 @@ class BTCKillerApp(App):
             "  [bold #ff4500]🔥 FIREPOWER ON[/]" if self._firepower else ""
         )
         self.query_one("#claude-header", Static).update(
-            f"[bold #4a9eff]◈ CLAUDE[/]  [dim]ask anything about the bot[/]{fp_tag}"
+            f"[bold #4a9eff]◈ CLAUDE[/]  [dim]trading co-pilot — monitors, advises, adjusts[/]{fp_tag}"
         )
 
     @on(Input.Submitted, "#claude-input")
@@ -1299,7 +1335,9 @@ class BTCKillerApp(App):
         log.write(f"[dim #4a9eff]▶[/] {query}")
         with state_lock:
             snap = dict(app_state)
-        cfg_snap = read_cfg()
+        cfg_snap  = read_cfg()
+        trades_snap = load_trades_today()
+        log_snap  = list(bot_log_buffer)
         fp = self._firepower
         threading.Thread(
             target=_claude_ask,
@@ -1309,6 +1347,8 @@ class BTCKillerApp(App):
                 lambda c:   self.call_from_thread(self._apply_settings, c),
                 fp,
                 lambda: self.call_from_thread(self._fire_bot_from_claude),
+                trades_snap,
+                log_snap,
             ),
             daemon=True,
         ).start()
