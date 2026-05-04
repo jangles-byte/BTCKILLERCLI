@@ -316,22 +316,28 @@ def _braille_chart(values: list[float], width: int, height: int,
 
         # Side labels  (must use style= arg, NOT markup strings inside append)
         tgt_row = to_px(target) // 4 if (target is not None and v_min < target < v_max) else -1
+        cur_price   = values[-1] if values else 0
+        tgt_above   = target is not None and tgt_row == -1 and target >  cur_price
+        tgt_below   = target is not None and tgt_row == -1 and target <= cur_price
+
         if cr == 0:
             if dist_label and dist_top:
                 result.append(f" ▲ {dist_label}", style="bold #ffc837")
+            elif tgt_above:
+                result.append(f" ▲ target ${target:,.0f} (off-chart)", style="dim #ffc837")
             else:
                 result.append(f" {v_max:,.0f}", style="dim #667788")
+        elif cr == 1 and tgt_above and not (dist_label and dist_top):
+            pass   # already used row 0
         elif cr == cur_row:
-            btc_now = values[-1] if values else 0
-            result.append(f" ◀ ${btc_now:,.0f}", style="bold #00ff88")
+            result.append(f" ◀ ${cur_price:,.0f}", style="bold #00ff88")
         elif cr == tgt_row:
             result.append(f" ── target ${target:,.0f}", style="#ffc837")
-        elif target is not None and cr == 1 and tgt_row == -1:
-            arrow = "▲" if target > (values[-1] if values else 0) else "▼"
-            result.append(f" {arrow} target ${target:,.0f} (off-chart)", style="dim #ffc837")
         elif cr == height - 1:
             if dist_label and not dist_top:
                 result.append(f" ▼ {dist_label}", style="bold #ffc837")
+            elif tgt_below:
+                result.append(f" ▼ target ${target:,.0f} (off-chart)", style="dim #ffc837")
             else:
                 result.append(f" {v_min:,.0f}", style="dim #667788")
 
@@ -545,7 +551,7 @@ class BTCKillerApp(App):
     _loss_mode:   str  = "daily_loss"
     _loss_period: str  = "daily"
     _kelly_on:    bool = False
-    _always_entry:str  = "ev"
+    _always_entry:str  = "signal"
 
     def compose(self) -> ComposeResult:
         yield ASCIIBanner(id="banner")
@@ -574,11 +580,7 @@ class BTCKillerApp(App):
                     yield Static("Close at ≤ X mins left", classes="lbl")
                     yield Input(value="3.0", id="always-close")
                     yield Static("Max price (¢)", classes="lbl")
-                    yield Input(value="75",  id="always-price")
-                    yield Static("Entry method", classes="lbl")
-                    with Horizontal(classes="tr", id="entry-row"):
-                        yield Button("EV",     id="entry-ev",  classes="ton")
-                        yield Button("Signal", id="entry-sig", classes="tog")
+                    yield Input(value="0.75",  id="always-price")
 
                 yield Static("◈ WAGER", classes="sec")
                 with Horizontal(classes="tr", id="wager-row"):
@@ -697,10 +699,7 @@ class BTCKillerApp(App):
         self._inp("#always-open",  str(cfg.get("always_open",     6.0)))
         self._inp("#always-close", str(cfg.get("always_close",    3.0)))
         self._inp("#always-price", str(cfg.get("always_max_price", 0.75)))
-        ae = cfg.get("trigger_method", "ev")
-        self._always_entry = ae
-        if ae == "signal":
-            self._tog2("entry-ev", "entry-sig")
+        self._always_entry = "signal"
 
 
     def _inp(self, sel: str, val: str) -> None:
@@ -802,7 +801,7 @@ class BTCKillerApp(App):
             chart.target = tgt
             if btc and tgt:
                 dist_amt = abs(btc - tgt)
-                chart.dist_label = f"${dist_amt:,.0f} to target"
+                chart.dist_label = f"${dist_amt:,.2f}"
                 chart.dist_top   = tgt > btc   # target above → label at top
             else:
                 chart.dist_label = None
@@ -816,16 +815,19 @@ class BTCKillerApp(App):
         tgt_s = f"${tgt:,.0f}" if tgt else "—"
 
         if btc and tgt:
-            dist  = btc - tgt
+            dist    = btc - tgt
             on_side = (tdir == "above" and dist > 0) or (tdir == "below" and dist < 0)
-            dc    = "#00ff88" if on_side else "#ff3b5c"
-            arrow = "▲" if dist > 0 else "▼"
+            dc      = "#00ff88" if on_side else "#ff3b5c"
+            arrow   = "▲" if dist > 0 else "▼"
+            dist_dollars = f"${abs(dist):,.2f}"
+            side_lbl = "above" if dist > 0 else "below"
+            ok_lbl   = "✓ on-side" if on_side else "✗ wrong-side"
             dist_str = (
-                f"[{dc}]{arrow} ${abs(dist):,.0f}[/] "
-                f"[dim]{'above' if dist>0 else 'below'} strike[/]  "
-                f"[{dc}]{'✓ on-side' if on_side else '✗ wrong-side'}[/]"
+                f"[bold {dc}]{arrow}  {dist_dollars}  {side_lbl} strike[/]"
+                f"   [dim]—[/]   [{dc}]{ok_lbl}[/]"
             )
         else:
+            dist_dollars = "—"
             dist_str = "[dim]waiting for price data…[/]"
 
         self.query_one("#mkt-row", Static).update(
@@ -874,9 +876,9 @@ class BTCKillerApp(App):
             f"   {prob_bar}   "
             f"[dim]YES [/][bold #00ff88]{ya*100:.0f}¢[/]  [{yev_c}]EV {yev:+.3f}[/]\n"
             f"\n"
-            f"[dim]PROB  NO [/][{nev_c}]{np_*100:.0f}%[/]   "
+            f"[dim]PROB  NO [/][#ff3b5c]{np_*100:.0f}%[/]   "
             f"[dim]CONV [/][{conv_c}]{conv_bar}[/] [bold white]{conv:.2f}[/]   "
-            f"[dim]YES [/][{yev_c}]{yp*100:.0f}%[/]"
+            f"[dim]YES [/][#00ff88]{yp*100:.0f}%[/]"
         )
 
         # Position panel
@@ -1028,11 +1030,6 @@ class BTCKillerApp(App):
     def _a1(self): self._aggr=1; self._tog_grp("aggr-row","aggr-1"); self._save()
     @on(Button.Pressed, "#aggr-2")
     def _a2(self): self._aggr=2; self._tog_grp("aggr-row","aggr-2"); self._save()
-
-    @on(Button.Pressed, "#entry-ev")
-    def _ee(self): self._always_entry="ev";     self._tog2("entry-sig","entry-ev");  self._save()
-    @on(Button.Pressed, "#entry-sig")
-    def _es(self): self._always_entry="signal"; self._tog2("entry-ev", "entry-sig"); self._save()
 
     @on(Button.Pressed, "#wager-dollar")
     def _wd(self): self._wager_mode="dollar";  self._tog2("wager-pct",    "wager-dollar"); self._save()
