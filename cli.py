@@ -15,45 +15,15 @@ CONFIG     = BOT_DIR / "bot_config.json"
 POS_FILE   = BOT_DIR / "current_position.json"
 TRADES_DIR = BOT_DIR / "trades"
 
-# ── Alien banner animation ────────────────────────────────────────────────────
-# (le, re, ant_left, ant_right)
-_EYE_SEQ: list[tuple[str,str,str,str]] = [
-    ("◉","◉","✦","✦"), ("◉","◉","✦","✦"), ("◉","◉","✦","✦"),
-    ("◉","◉","·","·"), ("◉","◉","✦","✦"), ("◉","◉","✦","·"),
-    ("◕","◕","✦","✦"), ("◕","◕","✦","✦"), ("◕","◕","·","✦"),
-    ("◉","◉","✦","✦"),
-    ("◔","◔","✦","✦"), ("◔","◔","·","✦"), ("◔","◔","✦","✦"),
-    ("◉","◉","✦","✦"),
-    ("─","─","✦","✦"),                     # blink
-    ("◉","◉","✦","✦"), ("◉","◉","✦","✦"),
-    ("◉","─","✦","·"), ("◉","─","·","✦"), # wink
-    ("◉","◉","✦","✦"),
-    ("◎","◎","✦","✦"), ("◎","◎","✦","✦"), # wide
-    ("─","─","·","·"),                     # blink
-    ("◉","◉","✦","✦"), ("◉","◉","✦","✦"), ("◉","◉","✦","✦"),
-]
-
-_BTC_KILLER_LINES = [
-    " ██████╗ ████████╗ ██████╗    ██╗  ██╗██╗██╗     ██╗     ███████╗██████╗ ",
-    " ██╔══██╗╚══██╔══╝██╔════╝    ██║ ██╔╝██║██║     ██║     ██╔════╝██╔══██╗",
-    " ██████╔╝   ██║   ██║         █████╔╝ ██║██║     ██║     █████╗  ██████╔╝",
-    " ██╔══██╗   ██║   ██║         ██╔═██╗ ██║██║     ██║     ██╔══╝  ██╔══██╗",
-    " ██████╔╝   ██║   ╚██████╗    ██║  ██╗██║███████╗███████╗███████╗██║  ██║",
-    " ╚═════╝    ╚═╝    ╚═════╝    ╚═╝  ╚═╝╚═╝╚══════╝╚══════╝╚══════╝╚═╝  ╚═╝",
-]
-
-def _alien_lines(le: str, re: str, a0: str, a1: str) -> list[str]:
-    """8-line alien body; caller handles per-char colouring."""
-    return [
-        f"      {a0}         {a1}      ",
-        "     /|         |\\     ",
-        "    ╔═════════════╗    ",
-        f"   ╔╝  {le}       {re}  ╚╗   ",
-        "   ║    ╰─────╯    ║   ",
-        "   ║   ╱───────╲   ║   ",
-        "    ╚═════════════╝    ",
-        "    ╱╲           ╱╲    ",
-    ]
+# ── Banner ───────────────────────────────────────────────────────────────────
+_BTK_BANNER = (
+    " ██████╗ ████████╗ ██████╗    ██╗  ██╗██╗██╗     ██╗     ███████╗██████╗ \n"
+    " ██╔══██╗╚══██╔══╝██╔════╝    ██║ ██╔╝██║██║     ██║     ██╔════╝██╔══██╗\n"
+    " ██████╔╝   ██║   ██║         █████╔╝ ██║██║     ██║     █████╗  ██████╔╝\n"
+    " ██╔══██╗   ██║   ██║         ██╔═██╗ ██║██║     ██║     ██╔══╝  ██╔══██╗\n"
+    " ██████╔╝   ██║   ╚██████╗    ██║  ██╗██║███████╗███████╗███████╗██║  ██║\n"
+    " ╚═════╝    ╚═╝    ╚═════╝    ╚═╝  ╚═╝╚═╝╚══════╝╚══════╝╚══════╝╚═╝  ╚═╝"
+)
 
 # ── Shared state ─────────────────────────────────────────────────────────────
 bot_process: subprocess.Popen | None = None
@@ -337,16 +307,16 @@ def _braille_chart(values: list[float], width: int, height: int,
                 else:                  result.append(ch, style="#007744")
             else:                result.append(ch, style="bold white")
 
-        # Side labels
+        # Side labels  (must use style= arg, NOT markup strings inside append)
         if cr == 0:
-            result.append(f" [dim]{v_max:,.0f}[/]", style="")
+            result.append(f" {v_max:,.0f}", style="dim #667788")
         elif cr == cur_row:
             btc_now = values[-1] if values else 0
-            result.append(f" [bold #00ff88]◀ ${btc_now:,.0f}[/]", style="")
+            result.append(f" ◀ ${btc_now:,.0f}", style="bold #00ff88")
         elif target is not None and cr == to_px(target) // 4:
-            result.append(f" [#ffc837]── target ${target:,.0f}[/]", style="")
+            result.append(f" ── target ${target:,.0f}", style="#ffc837")
         elif cr == height - 1:
-            result.append(f" [dim]{v_min:,.0f}[/]", style="")
+            result.append(f" {v_min:,.0f}", style="dim #667788")
 
         result.append("\n")
 
@@ -381,97 +351,47 @@ class BrailleChart(Widget):
         return _braille_chart(self.prices, w, h, self.target)
 
 
-class AlienBanner(Widget):
-    """Animated alien + BTC KILLER block-text banner."""
-    _frame: reactive[int] = reactive(0)
-
-    def on_mount(self) -> None:
-        self.set_interval(0.18, self._tick)
-
-    def _tick(self) -> None:
-        self._frame = (self._frame + 1) % len(_EYE_SEQ)
-
-    def render(self) -> RenderableType:
-        le, re, a0, a1 = _EYE_SEQ[self._frame]
-        alien = _alien_lines(le, re, a0, a1)
-        # Pad BTC KILLER to 8 rows (blank top + bottom)
-        text_rows = [""] + _BTC_KILLER_LINES + [""]
-
-        G  = "bold #00ff88"   # green — BTC KILLER
-        C  = "#33ccee"        # cyan  — alien body
-        R  = "bold #ff4444"   # red   — eyes
-        YB = "bold #ffcc00"   # bright yellow — antenna on
-        YD = "#886600"        # dim yellow    — antenna off
-
-        out = Text(justify="left")
-        for i in range(8):
-            if i > 0:
-                out.append("\n")
-
-            # ── BTC KILLER side ──────────────────────────────────────
-            tl = text_rows[i] if i < len(text_rows) else ""
-            out.append(tl.ljust(74), style=G)
-            out.append("  ")   # spacer
-
-            # ── Alien side ───────────────────────────────────────────
-            if i == 0:
-                # antenna tips: colour each tip char
-                out.append("      ", style=C)
-                out.append(a0, style=YB if a0 == "✦" else YD)
-                out.append("         ", style=C)
-                out.append(a1, style=YB if a1 == "✦" else YD)
-                out.append("      ", style=C)
-            elif i == 3:
-                # eye row: colour each eye char
-                prefix = "   ╔╝  "
-                middle = "       "
-                suffix = "  ╚╗   "
-                eye_style = R if le not in ("─", " ") else "bold #aaaaaa"
-                out.append(prefix, style=C)
-                out.append(le, style=eye_style)
-                out.append(middle, style=C)
-                out.append(re, style=R if re not in ("─", " ") else "bold #aaaaaa")
-                out.append(suffix, style=C)
-            else:
-                out.append(alien[i], style=C)
-        return out
-
 
 CSS = """
 Screen { background: #060a12; layout: vertical; }
 
+/* ── Banner ── */
 #banner {
-    height: 8; border-bottom: solid #1a2535;
-    background: #080c14; padding: 0 2;
+    height: 6; color: #00ff88; text-style: bold;
+    border-bottom: solid #1a2535; background: #060a12;
+    padding: 0 2; content-align: center middle;
 }
 #main-row { height: 1fr; }
 
-/* ── Settings ── */
+/* ── Settings (left) ── */
 #settings {
-    width: 27; background: #080c14;
+    width: 28; background: #080c14;
     border-right: solid #1a2535; padding: 0 1;
 }
-.sec { color: #ffc837; text-style: bold; height: 1; margin: 1 0 0 0; }
-.lbl { color: #334455; height: 1; }
-.tr  { height: 3; margin: 0 0 0 0; }
+.sec {
+    color: #ffc837; text-style: bold; height: 1;
+    margin: 1 0 0 0; padding: 0;
+}
+.lbl { color: #445566; height: 1; }
+.tr  { height: 3; margin: 0; }
 
 .tog {
     width: 1fr; height: 3; min-width: 0;
-    background: #0a0f1a; border: solid #1a2535; color: #334455;
+    background: #080c14; border: solid #1a2535; color: #334455;
 }
-.tog:hover { background: #141c2a; color: #aaa; }
+.tog:hover { background: #101825; color: #778899; }
 .ton {
     width: 1fr; height: 3; min-width: 0;
     background: #001a10; border: solid #00883a; color: #00ff88; text-style: bold;
 }
-.ton:hover { background: #002a18; }
+.ton:hover { background: #002818; }
 
 Input {
-    height: 3; background: #0a0f1a; border: solid #1a2535;
-    color: #fff; margin: 0 0 1 0; padding: 0 1;
+    height: 3; background: #080c14; border: solid #1a2535;
+    color: #cce8ff; margin: 0 0 0 0; padding: 0 1;
 }
-Input:focus { border: solid #ffc837; }
-.prev { color: #334455; height: 1; margin: 0 0 1 0; }
+Input:focus { border: solid #ffc837; color: #fff; }
+.prev { color: #2a3a4a; height: 1; }
 .sub-wrap { padding: 0; margin: 0; }
 
 #start-btn {
@@ -479,21 +399,22 @@ Input:focus { border: solid #ffc837; }
     color: #00ff88; border: solid #00883a; margin: 0 1 1 0;
 }
 #start-btn:hover { background: #003320; }
-#stop-btn  {
+#stop-btn {
     width: 1fr; height: 3; background: #1a0008;
     color: #ff3b5c; border: solid #882030; margin: 0 0 1 0;
 }
 #stop-btn:hover { background: #2a0010; }
+#bot-status { height: 2; color: #aaa; padding: 0; }
 
 /* ── Center ── */
 #center { width: 1fr; background: #060a12; padding: 0 1; }
 
 BrailleChart {
-    height: 16; border: solid #1a2535;
+    height: 20; border: solid #1a2535;
     background: #060a12; margin: 0 0 1 0;
 }
 #mkt-row {
-    height: 2; border: solid #1a2535; background: #080c14;
+    height: 3; border: solid #1a2535; background: #080c14;
     padding: 0 1; margin: 0 0 1 0;
 }
 #watch-banner {
@@ -501,34 +422,34 @@ BrailleChart {
     border: solid #553300; padding: 0 1; margin: 0 0 1 0;
 }
 #odds-row {
-    height: 5; border: solid #1a2535;
+    height: 4; border: solid #1a2535;
     background: #080c14; padding: 0 1; margin: 0 0 1 0;
 }
 #pos-panel {
-    height: 3; border: solid #1a2535;
-    background: #080c14; padding: 0 1; margin: 0 0 1 0;
-}
-#macro-row {
     height: 2; border: solid #1a2535;
     background: #080c14; padding: 0 1; margin: 0 0 1 0;
 }
 #sig-panel {
     height: 1fr; border: solid #1a2535;
-    background: #080c14; padding: 0 1;
+    background: #080c14; padding: 1 1;
 }
 
 /* ── Right ── */
-#right { width: 42; background: #060a12; border-left: solid #1a2535; padding: 0 1; }
+#right { width: 46; background: #060a12; border-left: solid #1a2535; padding: 0 1; }
+#macro-row {
+    height: 2; border: solid #1a2535; background: #080c14;
+    padding: 0 1; margin: 0 0 1 0;
+}
 #bot-log {
     height: 1fr; border: solid #1a2535;
     background: #080c14; scrollbar-size: 1 1;
 }
 #trade-stats {
-    height: 6; border: solid #1a2535;
+    height: 5; border: solid #1a2535;
     background: #080c14; padding: 0 1; margin: 1 0 0 0;
 }
 #trade-list {
-    height: 10; border: solid #1a2535;
+    height: 11; border: solid #1a2535;
     background: #080c14; padding: 0 1; margin: 1 0 0 0;
 }
 
@@ -558,7 +479,7 @@ class BTCKillerApp(App):
     _always_entry:str  = "ev"
 
     def compose(self) -> ComposeResult:
-        yield AlienBanner(id="banner")
+        yield Static(_BTK_BANNER, id="banner")
         with Horizontal(id="main-row"):
 
             # ── LEFT: settings ──────────────────────────────────────────────
@@ -642,11 +563,11 @@ class BTCKillerApp(App):
                 yield Static("", id="watch-banner")
                 yield Static("", id="odds-row")
                 yield Static("", id="pos-panel")
-                yield Static("", id="macro-row")
                 yield Static("", id="sig-panel")
 
             # ── RIGHT ────────────────────────────────────────────────────────
             with Vertical(id="right"):
+                yield Static("", id="macro-row")
                 yield RichLog(id="bot-log", highlight=False, markup=True,
                               wrap=False, auto_scroll=True)
                 yield Static("", id="trade-stats")
@@ -826,11 +747,11 @@ class BTCKillerApp(App):
             dc = "#00ff88" if (tdir=="above" and dist>0) or (tdir=="below" and dist<0) else "#ff3b5c"
             dist_str = f"  [{dc}]{'+' if dist>0 else ''}${dist:,.0f} {tdir} target[/]"
 
+        tgt_s = f"${tgt:,.0f}" if tgt else "—"
         self.query_one("#mkt-row", Static).update(
-            f"[#4a9eff]{ticker[-30:]}[/]  [{tc}]{m}:{ss:02d}[/]"
-            f"  [dim]strike[/] [white]${tgt:,.0f}[/]"
+            f"[bold #4a9eff]{ticker[-35:]}[/]  [{tc}]⏱ {m}:{ss:02d}[/]  "
+            f"[dim]strike[/] [white]{tgt_s}[/]  [bold white]BTC ${btc:,.0f}[/]\n"
             f"{dist_str}"
-            f"  [bold white]BTC ${btc:,.0f}[/]"
         )
 
         # Watching banner
@@ -864,12 +785,12 @@ class BTCKillerApp(App):
         conv_c   = "#00ff88" if conv >= 0.65 else "#ffc837" if conv >= 0.4 else "#334455"
 
         self.query_one("#odds-row", Static).update(
-            f" [dim]NO[/]  [bold #ffc837]{na*100:.0f}¢[/]  [{nev_c}]EV {nev:+.3f}[/]"
-            f"   {prob_bar}"
-            f"   [dim]YES[/] [bold #00ff88]{ya*100:.0f}¢[/]  [{yev_c}]EV {yev:+.3f}[/]\n"
-            f" [dim]NO[/] [{nev_c}]{np_*100:.0f}%[/]  "
-            f"conv [{conv_c}]{conv_bar}[/] {conv:.2f}  "
-            f"[dim]YES[/] [{yev_c}]{yp*100:.0f}%[/]"
+            f" [dim]NO [/][bold #ffc837]{na*100:.0f}¢[/] [{nev_c}]EV {nev:+.3f}[/]"
+            f"  {prob_bar}  "
+            f"[dim]YES [/][bold #00ff88]{ya*100:.0f}¢[/] [{yev_c}]EV {yev:+.3f}[/]\n"
+            f" [dim]prob  NO[/] [{nev_c}]{np_*100:.0f}%[/] "
+            f" [dim]conv[/] [{conv_c}]{conv_bar}[/] [white]{conv:.2f}[/] "
+            f" [dim]YES[/] [{yev_c}]{yp*100:.0f}%[/]"
         )
 
         # Position
@@ -881,11 +802,11 @@ class BTCKillerApp(App):
             pmins = pos.get("mins_remaining", 0)
             ptc   = "#ff3b5c" if pmins < 2 else "white"
             pp.update(
-                f"  [dim]POS[/] [{sc2}]{side}[/]"
-                f"  [dim]entry[/] [white]${pos.get('entry',0):.3f}[/]"
+                f" [dim]POSITION[/] [{sc2}]● {side}[/]"
+                f"  [dim]entry[/] [white]{pos.get('entry',0):.3f}[/]"
                 f"  [dim]qty[/] [white]{pos.get('contracts',0)}[/]"
                 f"  [dim]cost[/] [white]${pos.get('cost',0):.2f}[/]"
-                f"  [dim]left[/] [{ptc}]{pmins:.1f}m[/]"
+                f"  [dim]expires[/] [{ptc}]{pmins:.1f}m[/]"
             )
             pp.display = True
         else:
