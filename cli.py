@@ -747,6 +747,7 @@ class BTCKillerApp(App):
     _kelly_on:    bool = False
     _always_entry:str  = "signal"
     _firepower:   bool = False   # must be explicitly enabled each session
+    _tg_on:       bool = False
 
     def compose(self) -> ComposeResult:
         yield ASCIIBanner(id="banner")
@@ -811,6 +812,16 @@ class BTCKillerApp(App):
                     yield Static("Floor balance ($)", classes="lbl")
                     yield Input(value="20", id="hard-stop-amt")
 
+                yield Static("◈ TELEGRAM", classes="sec")
+                with Horizontal(classes="tr", id="tg-row"):
+                    yield Button("ON",  id="tg-on",  classes="tog")
+                    yield Button("OFF", id="tg-off", classes="ton")
+                with Vertical(id="tg-wrap", classes="sub-wrap"):
+                    yield Static("Bot token", classes="lbl")
+                    yield Input(placeholder="123456:ABC-...", id="tg-token", password=True)
+                    yield Static("Allowed user IDs (comma-sep)", classes="lbl")
+                    yield Input(placeholder="123456789,987654321", id="tg-users")
+
                 yield Button("⚙  Setup / Reconfigure", id="setup-btn")
 
             # ── CENTER ──────────────────────────────────────────────────────
@@ -853,6 +864,7 @@ class BTCKillerApp(App):
         self.query_one("#always-wrap").display  = False
         self.query_one("#kelly-wrap").display   = False
         self.query_one("#hardstop-wrap").display = False
+        self.query_one("#tg-wrap").display      = False
         self._load_settings()
         self.set_interval(1.0, self._tick)
 
@@ -908,6 +920,18 @@ class BTCKillerApp(App):
         self._inp("#always-price", str(cfg.get("always_max_price", 0.75)))
         self._always_entry = "signal"
 
+        tg_on = bool(cfg.get("telegram_enabled", False))
+        if tg_on:
+            self._tog2("tg-off", "tg-on")
+            self.query_one("#tg-wrap").display = True
+        else:
+            self._tog2("tg-on", "tg-off")
+            self.query_one("#tg-wrap").display = False
+        self._inp("#tg-token", str(cfg.get("telegram_token", "")))
+        users_raw = cfg.get("telegram_allowed_users", [])
+        users_str = ",".join(str(u) for u in users_raw) if isinstance(users_raw, list) else str(users_raw)
+        self._inp("#tg-users", users_str)
+
 
     def _inp(self, sel: str, val: str) -> None:
         try: self.query_one(sel, Input).value = val
@@ -940,6 +964,13 @@ class BTCKillerApp(App):
         except Exception:
             return default
 
+    def _str(self, sel: str) -> str:
+        """Safe string read from an Input widget."""
+        try:
+            return self.query_one(sel, Input).value.strip()
+        except Exception:
+            return ""
+
     def _save(self) -> None:
         AGGR = ["selective", "balanced", "aggressive"]
         try:
@@ -958,6 +989,11 @@ class BTCKillerApp(App):
                 "always_close":       self._val("#always-close",  3.0),
                 "always_max_price":   self._val("#always-price",  0.75),
                 "trigger_method":     self._always_entry,
+                "telegram_enabled":   self._tg_on,
+                "telegram_token":     self._str("#tg-token"),
+                "telegram_allowed_users": [
+                    u.strip() for u in self._str("#tg-users").split(",") if u.strip()
+                ],
             })
             self.notify("✓ Saved", severity="information", timeout=1)
         except Exception as e:
@@ -1290,6 +1326,15 @@ class BTCKillerApp(App):
     def _lph(self): self._loss_period="hourly"; self._tog_grp("period-row","per-hourly"); self._save()
     @on(Button.Pressed, "#per-weekly")
     def _lpw(self): self._loss_period="weekly"; self._tog_grp("period-row","per-weekly"); self._save()
+
+    @on(Button.Pressed, "#tg-on")
+    def _tg_enable(self):
+        self._tg_on = True;  self._tog2("tg-off", "tg-on")
+        self.query_one("#tg-wrap").display = True;  self._save()
+    @on(Button.Pressed, "#tg-off")
+    def _tg_disable(self):
+        self._tg_on = False; self._tog2("tg-on", "tg-off")
+        self.query_one("#tg-wrap").display = False; self._save()
 
     @on(Button.Pressed, "#setup-btn")
     def _h_setup(self): self.action_setup()
