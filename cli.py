@@ -417,6 +417,9 @@ def _braille_chart(values: list[float], width: int, height: int,
     # tight padding: show 10% extra so data fills 80%+ of chart height
     pad   = max(spread * 0.12, spread * 0.5 if spread < 20 else 20)
     v_min -= pad; v_max += pad
+    # Guard against zero-spread (flat price / only 1-2 samples) → avoid div/0
+    if v_max == v_min:
+        v_min -= 50; v_max += 50
 
     def to_px(v: float) -> int:
         r = int((v_max - v) / (v_max - v_min) * (px_h - 1))
