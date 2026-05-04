@@ -17,13 +17,15 @@ TRADES_DIR = BOT_DIR / "trades"
 
 # ── Banner ───────────────────────────────────────────────────────────────────
 _BANNER_LINES = [
-    "░▒▓███████▓▒░▒▓████████▓▒░▒▓██████▓▒░       ░▒▓█▓▒░░▒▓█▓▒░▒▓█▓▒░▒▓█▓▒░      ░▒▓█▓▒░      ░▒▓████████▓▒░▒▓███████▓▒░  ",
-    "░▒▓█▓▒░░▒▓█▓▒░ ░▒▓█▓▒░  ░▒▓█▓▒░░▒▓█▓▒░      ░▒▓█▓▒░░▒▓█▓▒░▒▓█▓▒░▒▓█▓▒░      ░▒▓█▓▒░      ░▒▓█▓▒░      ░▒▓█▓▒░░▒▓█▓▒░ ",
-    "░▒▓█▓▒░░▒▓█▓▒░ ░▒▓█▓▒░  ░▒▓█▓▒░             ░▒▓█▓▒░░▒▓█▓▒░▒▓█▓▒░▒▓█▓▒░      ░▒▓█▓▒░      ░▒▓█▓▒░      ░▒▓█▓▒░░▒▓█▓▒░ ",
-    "░▒▓███████▓▒░  ░▒▓█▓▒░  ░▒▓█▓▒░             ░▒▓███████▓▒░░▒▓█▓▒░▒▓█▓▒░      ░▒▓█▓▒░      ░▒▓██████▓▒░ ░▒▓███████▓▒░  ",
-    "░▒▓█▓▒░░▒▓█▓▒░ ░▒▓█▓▒░  ░▒▓█▓▒░             ░▒▓█▓▒░░▒▓█▓▒░▒▓█▓▒░▒▓█▓▒░      ░▒▓█▓▒░      ░▒▓█▓▒░      ░▒▓█▓▒░░▒▓█▓▒░ ",
-    "░▒▓█▓▒░░▒▓█▓▒░ ░▒▓█▓▒░  ░▒▓█▓▒░░▒▓█▓▒░      ░▒▓█▓▒░░▒▓█▓▒░▒▓█▓▒░▒▓█▓▒░      ░▒▓█▓▒░      ░▒▓█▓▒░      ░▒▓█▓▒░░▒▓█▓▒░ ",
-    "░▒▓███████▓▒░  ░▒▓█▓▒░   ░▒▓██████▓▒░       ░▒▓█▓▒░░▒▓█▓▒░▒▓█▓▒░▒▓████████▓▒░▒▓████████▓▒░▒▓████████▓▒░▒▓█▓▒░░▒▓█▓▒░",
+    r" _______  ________ ______         __    __ __ __ __                           ______  __       ______ ",
+    r"╱       ╲╱        ╱      ╲       ╱  │  ╱  ╱  ╱  ╱  │                         ╱      ╲╱  │     ╱      │",
+    r"$$$$$$$  $$$$$$$$╱$$$$$$  │      $$ │ ╱$$╱$$╱$$ $$ │ ______   ______        ╱$$$$$$  $$ │     $$$$$$╱ ",
+    r"$$ │__$$ │  $$ │ $$ │  $$╱       $$ │╱$$╱ ╱  $$ $$ │╱      ╲ ╱      ╲       $$ │  $$╱$$ │       $$ │  ",
+    r"$$    $$<   $$ │ $$ │            $$  $$<  $$ $$ $$ ╱$$$$$$  ╱$$$$$$  │      $$ │     $$ │       $$ │  ",
+    r"$$$$$$$  │  $$ │ $$ │   __       $$$$$  ╲ $$ $$ $$ $$    $$ $$ │  $$╱       $$ │   __$$ │       $$ │  ",
+    r"$$ │__$$ │  $$ │ $$ ╲__╱  │      $$ │$$  ╲$$ $$ $$ $$$$$$$$╱$$ │            $$ ╲__╱  $$ │_____ _$$ │_ ",
+    r"$$    $$╱   $$ │ $$    $$╱       $$ │ $$  $$ $$ $$ $$       $$ │            $$    $$╱$$       ╱ $$   │",
+    r"$$$$$$$╱    $$╱   $$$$$$╱        $$╱   $$╱$$╱$$╱$$╱ $$$$$$$╱$$╱              $$$$$$╱ $$$$$$$$╱$$$$$$╱",
 ]
 
 # ── Shared state ─────────────────────────────────────────────────────────────
@@ -347,6 +349,7 @@ from textual.reactive import reactive
 from textual import on
 from rich.console import RenderableType
 from rich.text import Text
+from rich.align import Align
 
 class BrailleChart(Widget):
     prices: reactive[list[float]] = reactive(list, layout=True)
@@ -360,41 +363,39 @@ class BrailleChart(Widget):
 
 
 class ASCIIBanner(Widget):
-    """Slow left-to-right shimmer sweep — centered, subtle."""
-    _TICK  = 0.06          # frame rate
-    _SPEED = 2.0           # chars per tick  (~6 sec full pass)
-    _MAX_W = max(len(l) for l in _BANNER_LINES)
-
-    def __init__(self, **kwargs) -> None:
-        super().__init__(**kwargs)
-        self._col: float = -20.0
+    """Ticker animation on $ faces — structural chars stay static."""
+    _TICKER = "0123456789BTCKILER$"
+    _TICK   = 0.07   # ~14 fps
+    _frame: int = 0
 
     def on_mount(self) -> None:
         self.set_interval(self._TICK, self._step)
 
     def _step(self) -> None:
-        self._col += self._SPEED
-        if self._col > self._MAX_W + 40:
-            self._col = -20.0
+        self._frame += 1
         self.refresh()
 
     def render(self) -> RenderableType:
-        art_w  = self._MAX_W
+        art_w  = max(len(l) for l in _BANNER_LINES)
         pad    = max(0, (self.size.width - art_w) // 2)
         spaces = " " * pad
-        result = Text(overflow="crop", no_wrap=True)
+        tl     = len(self._TICKER)
+        result = Text(no_wrap=True, overflow="crop")
         for r, line in enumerate(_BANNER_LINES):
             result.append(spaces)
-            sweep = self._col - r * 1.2   # gentle diagonal
             for c, ch in enumerate(line):
-                if ch == " ":
-                    result.append(ch)
+                if ch == "$":
+                    # Each column is phase-shifted so adjacent $s scroll out of sync
+                    ticker_ch = self._TICKER[(self._frame + c) % tl]
+                    result.append(ticker_ch, style="bold #00ff88")
+                elif ch in "╱╲│":
+                    result.append(ch, style="#009944")
+                elif ch == "_":
+                    result.append(ch, style="#006633")
+                elif ch == "<":
+                    result.append(ch, style="#007733")
                 else:
-                    dist = abs(c - sweep)
-                    if   dist <  5: result.append(ch, style="bold #00ffaa")
-                    elif dist < 14: result.append(ch, style="#00cc66")
-                    elif dist < 26: result.append(ch, style="#008844")
-                    else:           result.append(ch, style="#004d28")
+                    result.append(ch, style="#005522")
             result.append("\n")
         return result
 
@@ -404,9 +405,8 @@ Screen { background: #060a12; layout: vertical; }
 
 /* ── Banner ── */
 #banner {
-    height: 9; background: #060a12;
+    height: 11; background: #060a12;
     border-bottom: solid #1a2535;
-    overflow: hidden; padding: 1 0;
     content-align: center middle;
 }
 #main-row { height: 1fr; }
@@ -901,10 +901,11 @@ class BTCKillerApp(App):
             f"  {tc_(s.get('trend_24h'),'24H')}  {rng_s}  {vol_s}"
         )
 
-        # Signals — yes_prob (0-1) + strength (0-1), center-out bar like web dashboard
+        # Signals — yes_prob (0-1) + strength (0-1), center-out bar
         raw  = s.get("signals", [])
-        HALF = 12   # half-bar each side = 24 total
-        sigs = ["[bold #ffc837]◈ SIGNALS[/]"]
+        HALF = 12   # half-bar width each side = 24 total
+        sig_text = Text(no_wrap=True, overflow="crop")
+        sig_text.append("◈ SIGNALS\n", style="bold #ffc837")
         for sg in raw[:7]:
             nm   = sg.get("name",     "?")[:13]
             yp   = sg.get("yes_prob", 0.5)
@@ -912,22 +913,22 @@ class BTCKillerApp(App):
             rsn  = sg.get("reason",   "")[:28]
             pct  = int(yp * 100)
             fill = min(HALF, int(abs(yp - 0.5) * 2 * HALF * (0.4 + str_ * 0.6)))
+            pc   = ("#00ff88" if yp > 0.55 else
+                    "#ff3b5c" if yp < 0.45 else "#ffc837")
+            sig_text.append(f" {nm:<13} ", style="dim")
             if yp >= 0.5:
-                bar = ("░" * HALF
-                       + f"[#00ff88]{'█' * fill}[/]"
-                       + "░" * (HALF - fill))
-                pc  = "#00ff88" if yp > 0.55 else "#ffc837"
+                sig_text.append("░" * HALF,        style="#1a2535")
+                sig_text.append("█" * fill,         style=f"bold {pc}")
+                sig_text.append("░" * (HALF - fill),style="#1a2535")
             else:
-                bar = ("░" * (HALF - fill)
-                       + f"[#ff3b5c]{'█' * fill}[/]"
-                       + "░" * HALF)
-                pc  = "#ff3b5c" if yp < 0.45 else "#ffc837"
-            # Two lines per signal: bar row + reason row (no wrapping)
-            sigs.append(f" [dim]{nm:<13}[/] {bar} [{pc}]{pct}%[/]")
-            sigs.append(f"   [dim #334455]{rsn}[/]")
+                sig_text.append("░" * (HALF - fill),style="#1a2535")
+                sig_text.append("█" * fill,         style=f"bold {pc}")
+                sig_text.append("░" * HALF,         style="#1a2535")
+            sig_text.append(f" {pct}%\n", style=pc)
+            sig_text.append(f"   {rsn}\n", style="dim #334455")
         if not raw:
-            sigs.append(" [dim]waiting for market data…[/]")
-        self.query_one("#sig-panel", Static).update("\n".join(sigs))
+            sig_text.append(" waiting for market data…", style="dim")
+        self.query_one("#sig-panel", Static).update(sig_text)
 
         # Trade stats
         pf_c = "#00ff88" if stats["profit_factor"] >= 1 else "#ff3b5c"
