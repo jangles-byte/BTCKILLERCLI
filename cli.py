@@ -155,6 +155,72 @@ def stop_bot() -> None:
     with state_lock:
         app_state["bot_running"] = False
 
+# ── Shared strategy log (chat ↔ bot) ─────────────────────────────────────────
+_STRATEGY_LOG  = BOT_DIR / "claude_strategy_log.json"
+_BOT_DECISIONS = BOT_DIR / "claude_bot_decisions.json"
+_MAX_LOG_ENTRIES = 15
+
+def _read_strategy_log() -> list:
+    try:
+        if _STRATEGY_LOG.exists():
+            return json.loads(_STRATEGY_LOG.read_text()).get("entries", [])
+    except Exception:
+        pass
+    return []
+
+def _append_strategy_log(source: str, content: str, user_msg: str = "") -> None:
+    """Append a chat entry. source = 'user'|'chat'|'bot'"""
+    try:
+        entries = _read_strategy_log()
+        entries.append({
+            "ts":      datetime.now().isoformat(timespec="seconds"),
+            "source":  source,
+            "user":    user_msg,
+            "content": content,
+        })
+        entries = entries[-_MAX_LOG_ENTRIES:]
+        _STRATEGY_LOG.write_text(json.dumps({"entries": entries}, indent=2))
+    except Exception:
+        pass
+
+def _read_bot_decisions() -> list:
+    try:
+        if _BOT_DECISIONS.exists():
+            return json.loads(_BOT_DECISIONS.read_text()).get("decisions", [])
+    except Exception:
+        pass
+    return []
+
+def _format_strategy_log_for_prompt() -> str:
+    """Format recent chat exchanges for injection into bot prompt."""
+    entries = _read_strategy_log()
+    if not entries:
+        return "  (no recent chat exchanges)"
+    lines = []
+    for e in entries[-10:]:
+        ts  = e.get("ts", "")[-8:]
+        src = e.get("source", "?").upper()
+        if src == "CHAT":
+            if e.get("user"):
+                lines.append(f"  [{ts}] USER → {e['user']}")
+            lines.append(f"  [{ts}] CO-PILOT → {e['content']}")
+        elif src == "BOT":
+            lines.append(f"  [{ts}] BOT DECIDED → {e['content']}")
+    return "\n".join(lines) or "  (no recent exchanges)"
+
+def _format_bot_decisions_for_chat() -> str:
+    """Format recent bot decisions for the chat Claude prompt."""
+    decisions = _read_bot_decisions()
+    if not decisions:
+        return "  ClaudeBot not running or no decisions yet"
+    lines = []
+    for d in decisions[-5:]:
+        ts  = d.get("ts", "")[-8:]
+        dec = d.get("decision", "?")
+        ctx = d.get("context", "")
+        lines.append(f"  [{ts}] {dec}  —  {ctx}")
+    return "\n".join(lines)
+
 # ── Claude CLI helper ────────────────────────────────────────────────────────
 # Uses the local `claude` CLI (Claude Code) — no API key needed, uses your subscription.
 _PROTECTED_SETTINGS = {"daily_loss_limit", "hard_stop_balance", "hard_stop_enabled"}
@@ -244,6 +310,12 @@ Watching       : {state.get('watching_active', False)}  dir={state.get('watching
 === RECENT BOT LOG (last 40 lines) ===
 {log_txt}
 
+=== CLAUDE BOT RECENT DECISIONS ===
+{_format_bot_decisions_for_chat()}
+
+=== RECENT CHAT STRATEGY LOG (your prior advice + user messages) ===
+{_format_strategy_log_for_prompt()}
+
 === PROTECTED — NEVER MODIFY ===
 daily_loss_limit and hard_stop_balance are hard safety limits. Do NOT suggest or apply changes to these two fields under any circumstances.
 
@@ -253,7 +325,9 @@ If firepower is ON and conditions strongly warrant a trade, you may include FIRE
 
 === YOUR ROLE ===
 You are an active trading co-pilot, not a chatbot. Be direct, specific, and data-driven.
-- Proactively flag anything concerning you see in the state, log, or trade history
+- You and ClaudeBot are a team. Your advice feeds directly into ClaudeBot's next decision.
+- If ClaudeBot is running, your strategic critique WILL be read by it before its next trade.
+- Flag anything you see that ClaudeBot should know — bad setups, pattern you notice, strategy shifts.
 - Reference specific numbers from the data above, don't speak in generalities
 - Keep responses tight: 3-6 sentences max unless the user asks for detail
 - No markdown formatting (no **, no #, no bullet symbols)
@@ -300,6 +374,9 @@ You are an active trading co-pilot, not a chatbot. Be direct, specific, and data
                     keys = ", ".join(safe.keys())
                     log_cb(f"[bold #00ff88]◈[/] {display}")
                     log_cb(f"[bold #ffc837]⚙  applied → {keys}[/]")
+                    _append_strategy_log("chat",
+                        f"{display} [settings changed: {keys}]"[:500],
+                        user_msg=query[:200])
                     if fire_requested and firepower and fire_cb:
                         fire_cb()
                     return
@@ -307,6 +384,8 @@ You are an active trading co-pilot, not a chatbot. Be direct, specific, and data
                 pass  # fall through to show raw response
 
         log_cb(f"[bold #00ff88]◈[/] {response}")
+        # Log to shared strategy log so ClaudeBot can read it
+        _append_strategy_log("chat", response[:500], user_msg=query[:200])
 
         # Handle FIRE_BOT after displaying response
         if fire_requested and firepower and fire_cb:

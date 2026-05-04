@@ -33,6 +33,64 @@ with open(PRIVATE_KEY_PATH, "rb") as f:
 
 BOT_DIR = Path(__file__).resolve().parent
 
+# ── Shared strategy log (read chat advice, write bot decisions) ───────────────
+_STRATEGY_LOG  = BOT_DIR / "claude_strategy_log.json"
+_BOT_DECISIONS = BOT_DIR / "claude_bot_decisions.json"
+_MAX_LOG       = 15
+
+def _read_strategy_log() -> list:
+    try:
+        if _STRATEGY_LOG.exists():
+            return json.loads(_STRATEGY_LOG.read_text()).get("entries", [])
+    except Exception:
+        pass
+    return []
+
+def _write_bot_decision(decision_str: str, context: str) -> None:
+    """Log a bot decision so the chat Claude can read it."""
+    try:
+        existing = []
+        if _BOT_DECISIONS.exists():
+            existing = json.loads(_BOT_DECISIONS.read_text()).get("decisions", [])
+        existing.append({
+            "ts":       datetime.now().isoformat(timespec="seconds"),
+            "decision": decision_str,
+            "context":  context,
+        })
+        existing = existing[-_MAX_LOG:]
+        _BOT_DECISIONS.write_text(json.dumps({"decisions": existing}, indent=2))
+        # Also append to shared log so chat sees it
+        entries = _read_strategy_log()
+        entries.append({
+            "ts":      datetime.now().isoformat(timespec="seconds"),
+            "source":  "bot",
+            "user":    "",
+            "content": f"{decision_str}  [{context}]",
+        })
+        entries = entries[-_MAX_LOG:]
+        _STRATEGY_LOG.write_text(json.dumps({"entries": entries}, indent=2))
+    except Exception:
+        pass
+
+def _format_chat_log_for_bot() -> str:
+    """Format recent co-pilot chat exchanges for the bot prompt."""
+    entries = _read_strategy_log()
+    if not entries:
+        return "  (no co-pilot advice yet — chat with Claude in the dashboard to send strategy)"
+    lines = []
+    for e in entries[-10:]:
+        ts  = e.get("ts", "")[-8:]
+        src = e.get("source", "?").upper()
+        if src == "CHAT":
+            user = e.get("user", "")
+            resp = e.get("content", "")
+            if user:
+                lines.append(f"  [{ts}] USER TOLD CO-PILOT: {user}")
+            lines.append(f"  [{ts}] CO-PILOT SAID: {resp}")
+        elif src == "BOT":
+            lines.append(f"  [{ts}] YOU (BOT) PREVIOUSLY DECIDED: {e.get('content','')}")
+    return "\n".join(lines) or "  (no entries)"
+
 # ── Auth ──────────────────────────────────────────────────────────────────
 
 def sign_request(method, path):
@@ -244,39 +302,98 @@ def ask_claude(ticker, mins_rem, yes_ask, no_ask, strike, strike_dir,
         for s in sigs[:8]
     ) or "  loading..."
 
+    # Full signal breakdown
+    pos_safety      = raw_sig.get("pos_safety", 0)
+    safe_side       = raw_sig.get("safe_side", "unknown")
+    sig_agreement   = raw_sig.get("signal_agreement", 0)
+    sig_direction   = raw_sig.get("signal_direction", "unknown")
+    our_yes_prob    = raw_sig.get("our_yes_prob", 0.5)
+    our_no_prob     = raw_sig.get("our_no_prob", 0.5)
+    confidence      = raw_sig.get("confidence", 0)
+    distance        = raw_sig.get("distance", 0)
+    time_factor     = raw_sig.get("time_factor", 0)
+
+    # Position P&L estimate
+    if already_traded and our_side and our_entry and our_contracts:
+        current_price = yes_ask if our_side == "yes" else no_ask
+        unrealized    = our_contracts * (current_price - our_entry)
+        pos_pnl_txt   = f"unrealized P&L ≈ ${unrealized:+.2f}"
+    else:
+        pos_pnl_txt = ""
+
     prompt = f"""You are ClaudeBot — a fully autonomous AI trading agent on Kalshi BTC 15-minute prediction markets. You ARE the bot. You make ALL decisions.
+
+You have access to web search and other tools if you need quick external context (e.g. macro news, BTC sentiment). Use them if relevant before deciding.
 
 === LIVE MARKET ===
 Ticker    : {ticker}
 Strike    : ${strike:,.0f}  ({strike_dir})
-BTC price : ${btc_price:,.2f}  ({"ABOVE" if btc_price and btc_price > strike else "BELOW"} strike)
+BTC price : ${btc_price:,.2f}  ({"ABOVE" if btc_price and btc_price > strike else "BELOW"} strike by ${abs((btc_price or 0) - strike):,.0f})
 YES ask   : {yes_ask*100:.0f}¢    NO ask: {no_ask*100:.0f}¢
-Time left : {mins_rem:.1f} minutes  ({mins_rem*60:.0f} seconds)
+Time left : {mins_rem:.1f} minutes
 
-=== BTC PRICE HISTORY (last 60 readings) ===
+=== BTC PRICE HISTORY ===
 {trend_txt}
 
-=== MARKET SIGNALS (raw data — use your own judgment) ===
+=== ALL SIGNALS ===
+Individual signals (name / YES probability / strength / reason):
 {sigs_txt}
+
+Aggregated signal output:
+  Our YES probability : {our_yes_prob*100:.0f}%   NO probability: {our_no_prob*100:.0f}%
+  Signal agreement    : {sig_agreement:.2f}  (1.0 = all signals agree)
+  Signal direction    : {sig_direction}
+  Positional safety   : {pos_safety:.2f}  (how far BTC is from strike; higher = safer)
+  Safe side           : {safe_side}  (which side the price favors)
+  Distance to strike  : ${distance:,.0f}
+  Time factor         : {time_factor:.2f}  (1.0 = close to expiry, 0 = lots of time)
+  Signal confidence   : {confidence:.2f}
 
 === ACCOUNT ===
 Balance        : ${balance:.2f}
-Budget left    : ${budget:.2f}  (max spend this market)
+Budget left    : ${budget:.2f}  (max you can spend this market)
 Day P&L        : ${pnl_today:+.2f}
-Daily loss lim : ${daily_loss_limit:.2f}  [HARD STOP — non-negotiable]
-Wallet floor   : ${wallet_floor:.2f}  [HARD STOP — non-negotiable]
-Floor active   : {wallet_floor_enabled}
+Daily loss lim : ${daily_loss_limit:.2f}  [HARD STOP]
+Wallet floor   : ${wallet_floor:.2f}  [HARD STOP — floor active: {wallet_floor_enabled}]
 
 === CURRENT POSITION ===
-{pos_txt}
+{pos_txt}  {pos_pnl_txt}
 
-=== YOUR RULES ===
-- Wallet floor and daily loss limit are absolute hard stops. You CANNOT override them.
-- Budget cap of ${budget:.2f} is enforced — you cannot spend more than this.
-- If already traded this market: you can only HOLD or SELL (no new entries).
-- You may sell to cut losses early if you think the position is wrong.
-- Make decisions based on where BTC is relative to the strike, time remaining, and signal data.
-- Think about: price momentum, time decay, current odds vs your probability estimate.
+=== CO-PILOT CHAT LOG (recent advice from the dashboard Claude + user) ===
+This is what the trading co-pilot and the user have been discussing. This is YOUR strategy context.
+Read it carefully — act on the advice, flag if you disagree, incorporate the reasoning.
+{_format_chat_log_for_bot()}
+
+=== YOUR PHILOSOPHY ===
+Goal: maximize profit, minimize loss. Quality over quantity. Never guess.
+
+What to use:
+- Positional safety + safe_side: is BTC clearly on one side of the strike?
+- Signal agreement + signal_direction: do signals agree, and which way?
+- Individual signal breakdown: which signals are high-strength and why?
+- Price momentum: is BTC moving toward or away from the strike?
+- Time factor: late in the market, high time factor = less room for reversals
+- Current odds: is YES or NO cheap relative to the true probability?
+
+What NOT to use:
+- EV (expected value) — this just rises as price drops, not a real edge signal
+- Do not trade just because a metric looks good in isolation
+
+When to sit out:
+- Signals are mixed or weak (low agreement, low confidence)
+- BTC is hovering near the strike with no clear direction
+- There isn't enough time left to recover if wrong
+- You genuinely don't know — sitting out IS a valid, smart decision
+
+When to trade:
+- Strong signal agreement pointing one direction
+- BTC is clearly on the profitable side with time left
+- Price is reasonable for the probability (not overpriced)
+- Multiple high-strength signals confirm the same thesis
+
+Position management:
+- If already in a position: HOLD unless something has clearly changed against you
+- SELL to cut losses if signals have flipped and you're wrong-sided with time left
 
 === RESPOND WITH EXACTLY ONE LINE ===
 No explanation. No preamble. Just the decision:
@@ -301,19 +418,28 @@ No explanation. No preamble. Just the decision:
         resp  = lines[-1].upper() if lines else "HOLD"
         print(f"  🤖 ClaudeBot says: {resp}")
 
+        ctx = (f"ticker={ticker} btc=${btc_price:,.0f} strike=${strike:,.0f} "
+               f"YES={yes_ask*100:.0f}¢ NO={no_ask*100:.0f}¢ {mins_rem:.1f}min")
+
         if resp.startswith("TRADE_YES"):
             parts = resp.split()
             try:    amt = float(parts[1])
             except: amt = budget * 0.5
-            return ("trade", "yes", min(amt, budget))
+            amt = min(amt, budget)
+            _write_bot_decision(f"TRADE_YES ${amt:.2f}", ctx)
+            return ("trade", "yes", amt)
         elif resp.startswith("TRADE_NO"):
             parts = resp.split()
             try:    amt = float(parts[1])
             except: amt = budget * 0.5
-            return ("trade", "no", min(amt, budget))
+            amt = min(amt, budget)
+            _write_bot_decision(f"TRADE_NO ${amt:.2f}", ctx)
+            return ("trade", "no", amt)
         elif resp.startswith("SELL"):
+            _write_bot_decision("SELL", ctx)
             return ("sell",)
         else:
+            _write_bot_decision("HOLD", ctx)
             return ("hold",)
 
     except subprocess.TimeoutExpired:
