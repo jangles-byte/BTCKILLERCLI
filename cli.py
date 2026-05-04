@@ -310,13 +310,18 @@ def _braille_chart(values: list[float], width: int, height: int,
             else:                result.append(ch, style="bold white")
 
         # Side labels  (must use style= arg, NOT markup strings inside append)
+        tgt_row = to_px(target) // 4 if (target is not None and v_min < target < v_max) else -1
         if cr == 0:
             result.append(f" {v_max:,.0f}", style="dim #667788")
         elif cr == cur_row:
             btc_now = values[-1] if values else 0
             result.append(f" ◀ ${btc_now:,.0f}", style="bold #00ff88")
-        elif target is not None and cr == to_px(target) // 4:
+        elif cr == tgt_row:
             result.append(f" ── target ${target:,.0f}", style="#ffc837")
+        elif target is not None and cr == 1 and tgt_row == -1:
+            # target out of chart range — pin label to top so it's always visible
+            arrow = "▲" if target > (values[-1] if values else 0) else "▼"
+            result.append(f" {arrow} target ${target:,.0f} (off-chart)", style="dim #ffc837")
         elif cr == height - 1:
             result.append(f" {v_min:,.0f}", style="dim #667788")
 
@@ -399,10 +404,16 @@ Input:focus { border: solid #ffc837; color: #fff; }
 #start-btn:hover { background: #003320; }
 #stop-btn {
     width: 1fr; height: 3; background: #1a0008;
-    color: #ff3b5c; border: solid #882030; margin: 0 0 1 0;
+    color: #ff3b5c; border: solid #882030; margin: 0 1 1 0;
 }
 #stop-btn:hover { background: #2a0010; }
+#setup-btn {
+    width: 5; height: 3; background: #0a0f1a;
+    color: #ffc837; border: solid #443300; margin: 0 0 1 0;
+}
+#setup-btn:hover { background: #1a1500; color: #ffe066; }
 #bot-status { height: 2; color: #aaa; }
+#log-header { height: 1; color: #ffc837; padding: 0 1; margin: 1 0 0 0; }
 
 /* ─────────────────────────────────────────────
    CENTER — Chart + live info
@@ -467,6 +478,7 @@ class BTCKillerApp(App):
     BINDINGS = [
         ("s", "start_bot", "Start"),
         ("x", "stop_bot",  "Stop"),
+        ("r", "setup",     "Setup"),
         ("q", "quit",      "Quit"),
     ]
 
@@ -480,7 +492,6 @@ class BTCKillerApp(App):
     _loss_mode:   str  = "daily_loss"
     _loss_period: str  = "daily"
     _kelly_on:    bool = False
-    _tg_on:       bool = False
     _always_entry:str  = "ev"
 
     def compose(self) -> ComposeResult:
@@ -493,6 +504,7 @@ class BTCKillerApp(App):
                 with Horizontal(classes="tr"):
                     yield Button("▶ Start", id="start-btn")
                     yield Button("■ Stop",  id="stop-btn")
+                    yield Button("⚙",      id="setup-btn")
                 yield Static("", id="bot-status")
 
                 yield Static("◈ MODE", classes="sec")
@@ -551,15 +563,6 @@ class BTCKillerApp(App):
                     yield Static("Floor balance ($)", classes="lbl")
                     yield Input(value="20", id="hard-stop-amt")
 
-                yield Static("◈ TELEGRAM", classes="sec")
-                with Horizontal(classes="tr", id="tg-row"):
-                    yield Button("Enable",  id="tg-enable",  classes="tog")
-                    yield Button("Disable", id="tg-disable", classes="ton")
-                yield Static("Bot token", classes="lbl")
-                yield Input(value="", id="tg-token",  placeholder="@BotFather token", password=True)
-                yield Static("Allowed user IDs", classes="lbl")
-                yield Input(value="", id="tg-users",  placeholder="123456, 789012")
-                yield Static("(Press Enter to save)", classes="prev")
 
             # ── CENTER ──────────────────────────────────────────────────────
             with Vertical(id="center"):
@@ -573,6 +576,8 @@ class BTCKillerApp(App):
             with Vertical(id="right"):
                 yield Static("", id="macro-row")
                 yield Static("", id="sig-panel")
+                yield Static("[bold #ffc837]◈ BOT LOG[/]  [dim]starts when bot is running[/]",
+                             id="log-header", markup=True)
                 yield RichLog(id="bot-log", highlight=False, markup=True,
                               wrap=False, auto_scroll=True)
                 yield Static("", id="trade-stats")
@@ -645,14 +650,6 @@ class BTCKillerApp(App):
         if ae == "signal":
             self._tog2("entry-ev", "entry-sig")
 
-        te = bool(cfg.get("telegram_enabled", False))
-        self._tg_on = te
-        if te:
-            self._tog2("tg-disable", "tg-enable")
-        if cfg.get("telegram_token"):
-            self._inp("#tg-token", cfg["telegram_token"])
-        if cfg.get("telegram_allowed_users"):
-            self._inp("#tg-users", ", ".join(str(u) for u in cfg["telegram_allowed_users"]))
 
     def _inp(self, sel: str, val: str) -> None:
         try: self.query_one(sel, Input).value = val
@@ -695,11 +692,6 @@ class BTCKillerApp(App):
                 "always_close_window":   float(self.query_one("#always-close",  Input).value or 3),
                 "always_price_cap":      float(self.query_one("#always-price",  Input).value or 75),
                 "always_entry_method":   self._always_entry,
-                "telegram_enabled":      self._tg_on,
-                "telegram_token":        self.query_one("#tg-token", Input).value.strip(),
-                "telegram_allowed_users": [
-                    u.strip() for u in self.query_one("#tg-users", Input).value.split(",") if u.strip()
-                ],
             })
         except Exception: pass
 
@@ -746,17 +738,25 @@ class BTCKillerApp(App):
         m, ss  = secs // 60, secs % 60
         tc     = "#ff3b5c" if secs < 60 else "#ffc837" if secs < 180 else "#00ff88"
 
-        dist_str = ""
-        if btc and tgt:
-            dist = btc - tgt
-            dc = "#00ff88" if (tdir=="above" and dist>0) or (tdir=="below" and dist<0) else "#ff3b5c"
-            dist_str = f"  [{dc}]{'+' if dist>0 else ''}${dist:,.0f} {tdir} target[/]"
-
         tgt_s = f"${tgt:,.0f}" if tgt else "—"
+
+        if btc and tgt:
+            dist  = btc - tgt
+            on_side = (tdir == "above" and dist > 0) or (tdir == "below" and dist < 0)
+            dc    = "#00ff88" if on_side else "#ff3b5c"
+            arrow = "▲" if dist > 0 else "▼"
+            dist_str = (
+                f"[{dc}]{arrow} ${abs(dist):,.0f}[/] "
+                f"[dim]{'above' if dist>0 else 'below'} strike[/]  "
+                f"[{dc}]{'✓ on-side' if on_side else '✗ wrong-side'}[/]"
+            )
+        else:
+            dist_str = "[dim]waiting for price data…[/]"
+
         self.query_one("#mkt-row", Static).update(
-            f"[bold #4a9eff]{ticker[-35:]}[/]  [{tc}]⏱ {m}:{ss:02d}[/]  "
-            f"[dim]strike[/] [white]{tgt_s}[/]  [bold white]BTC ${btc:,.0f}[/]\n"
-            f"{dist_str}"
+            f"[bold #4a9eff]{ticker[-38:]}[/]  [{tc}]⏱ {m}:{ss:02d}[/]  "
+            f"[dim]strike[/] [bold white]{tgt_s}[/]  [dim]BTC[/] [bold white]${btc:,.0f}[/]\n"
+            f" {dist_str}"
         )
 
         # Watching banner
@@ -832,31 +832,30 @@ class BTCKillerApp(App):
             f"  {tc_(s.get('trend_24h'),'24H')}  {rng_s}  {vol_s}"
         )
 
-        # Signals (right panel)
-        raw  = s.get("signals", [])
-        BAR  = 22
+        # Signals — uses yes_prob (0-1) and strength (0-1), exactly like web dashboard
+        raw = s.get("signals", [])
+        HALF = 11   # half-bar width each side
         sigs = ["[bold #ffc837]◈ SIGNALS[/]"]
-        sig_names = raw if raw else [
-            {"name": "Liquidations", "value": 0},
-            {"name": "Momentum",     "value": 0},
-            {"name": "Kalshi Dist",  "value": 0},
-            {"name": "Crowd",        "value": 0},
-            {"name": "Multi-TF",     "value": 0},
-        ]
-        for sg in sig_names[:7]:
-            nm  = sg.get("name","?")[:14]
-            val = sg.get("value", 0)
-            bl  = min(BAR, int(abs(val) * BAR))
-            mid = BAR // 2
-            if val > 0:
-                bar = "░" * mid + "[#00ff88]" + "█" * min(bl, mid) + "[/]" + "░" * max(0, mid - bl)
-                sc3 = "#00ff88"
-            elif val < 0:
-                bar = "░" * max(0, mid - bl) + "[#ff3b5c]" + "█" * min(bl, mid) + "[/]" + "░" * mid
-                sc3 = "#ff3b5c"
+        for sg in raw[:7]:
+            nm   = sg.get("name", "?")[:14]
+            yp   = sg.get("yes_prob", 0.5)
+            str_ = sg.get("strength", 0.0)
+            rsn  = sg.get("reason", "")[:34]
+            pct  = int(yp * 100)
+            # Bar: center-out, green=YES right, red=NO left  (matches web dash)
+            fill = int(abs(yp - 0.5) * 2 * HALF * (0.4 + str_ * 0.6))
+            fill = min(fill, HALF)
+            if yp >= 0.5:
+                bar  = "░" * HALF + "[#00ff88]" + "█" * fill + "[/]" + "░" * (HALF - fill)
+                pc   = "#00ff88" if yp > 0.55 else "#ffc837"
             else:
-                bar = "░" * BAR; sc3 = "#334455"
-            sigs.append(f" [dim]{nm:<14}[/] {bar} [{sc3}]{val:+.2f}[/]")
+                bar  = "░" * (HALF - fill) + "[#ff3b5c]" + "█" * fill + "[/]" + "░" * HALF
+                pc   = "#ff3b5c" if yp < 0.45 else "#ffc837"
+            sigs.append(
+                f" [dim]{nm:<14}[/] {bar} [{pc}]{pct}%[/] [dim]{rsn}[/]"
+            )
+        if not raw:
+            sigs.append(" [dim]waiting for market data…[/]")
         self.query_one("#sig-panel", Static).update("\n".join(sigs))
 
         # Trade stats
@@ -976,10 +975,8 @@ class BTCKillerApp(App):
     @on(Button.Pressed, "#per-weekly")
     def _lpw(self): self._loss_period="weekly"; self._tog_grp("period-row","per-weekly"); self._save()
 
-    @on(Button.Pressed, "#tg-enable")
-    def _ten(self):  self._tg_on=True;  self._tog2("tg-disable","tg-enable");  self._save()
-    @on(Button.Pressed, "#tg-disable")
-    def _tdis(self): self._tg_on=False; self._tog2("tg-enable", "tg-disable"); self._save()
+    @on(Button.Pressed, "#setup-btn")
+    def _h_setup(self): self.action_setup()
 
     @on(Input.Submitted)
     def _inp_submit(self, _):
@@ -988,6 +985,23 @@ class BTCKillerApp(App):
 
     def action_start_bot(self): start_bot(); self.notify("Bot starting…", severity="information")
     def action_stop_bot(self):  stop_bot();  self.notify("Bot stopped.",   severity="warning")
+
+    def action_setup(self) -> None:
+        stop_bot()
+        setup = BOT_DIR / "setup.sh"
+        if setup.exists():
+            import subprocess as _sp
+            try:
+                # macOS: open a new Terminal window running setup.sh
+                _sp.Popen([
+                    "osascript", "-e",
+                    f'tell application "Terminal" to do script "bash {setup}"'
+                ])
+                self.notify("Opening setup in Terminal…", severity="information")
+            except Exception:
+                self.notify(f"Run: bash {setup}", severity="warning", timeout=8)
+        else:
+            self.notify("setup.sh not found — run from BTC_KILLER_CLI folder", severity="error")
 
 
 # ── Entry ─────────────────────────────────────────────────────────────────────

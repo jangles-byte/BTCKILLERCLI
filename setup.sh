@@ -75,12 +75,30 @@ read -p "  Coinalyze API Key:        " COINALYZE_KEY
 read -p "  Daily loss limit [\$50]:   " DAILY_LOSS;   DAILY_LOSS="${DAILY_LOSS:-50}"
 read -p "  Max contracts/trade [200]: " MAX_C;        MAX_C="${MAX_C:-200}"
 
+echo ""
+echo -e "  ${BOLD}Telegram Alerts${NC} ${CYAN}(optional — press Enter to skip)${NC}"
+echo -e "  ${CYAN}Create a bot via @BotFather, then message it to get your user ID${NC}"
+echo ""
+read -p "  Telegram bot token:       " TG_TOKEN
+TG_ENABLED="false"
+TG_USERS=""
+if [ -n "$TG_TOKEN" ]; then
+    read -p "  Allowed user IDs (comma-separated): " TG_USERS
+    TG_ENABLED="true"
+    echo -e "  ${GREEN}✓ Telegram enabled${NC}"
+else
+    echo -e "  ${YELLOW}  Skipping Telegram (can add later via setup)${NC}"
+fi
+
 cat > .env << EOF
 KALSHI_API_KEY_ID=$KALSHI_KEY_ID
 KALSHI_PRIVATE_KEY_PATH=$KALSHI_PEM
 COINALYZE_API_KEY=$COINALYZE_KEY
 DAILY_LOSS_LIMIT=$DAILY_LOSS
 MAX_CONTRACTS_PER_TRADE=$MAX_C
+TELEGRAM_ENABLED=$TG_ENABLED
+TELEGRAM_BOT_TOKEN=$TG_TOKEN
+TELEGRAM_ALLOWED_USERS=$TG_USERS
 EOF
 echo ""
 echo -e "  ${GREEN}✓ Config saved${NC}"
