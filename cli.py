@@ -63,7 +63,14 @@ def read_position() -> dict | None:
     try:
         if POS_FILE.exists():
             d = json.loads(POS_FILE.read_text())
-            return d if d.get("ticker") else None
+            if not d.get("ticker"):
+                return None
+            # Auto-expire: if current market has moved on, clear stale position
+            cur = app_state.get("market_ticker")
+            if cur and d.get("ticker") != cur:
+                POS_FILE.write_text("{}")
+                return None
+            return d
     except Exception:
         pass
     return None
@@ -802,12 +809,13 @@ BrailleChart {
     background: #080c14; padding: 0 2; margin: 0 0 1 0;
     content-align: center middle; text-align: center;
 }
+#pos-row { height: 4; margin: 0 0 1 0; }
 #pos-panel {
     height: 4; border: solid #ffc837;
     background: #0d0e05; padding: 0 2;
     content-align: center middle; text-align: center;
-    margin: 0 0 1 0;
 }
+#clear-pos { width: 10; height: 4; }
 
 /* ─────────────────────────────────────────────
    RIGHT — Signals + Log + Trades
@@ -952,7 +960,9 @@ class BTCKillerApp(App):
                 yield Static("", id="mkt-row")
                 yield Static("", id="watch-banner")
                 yield Static("", id="odds-row")
-                yield Static("", id="pos-panel")
+                with Horizontal(id="pos-row"):
+                    yield Static("", id="pos-panel")
+                    yield Button("✕ CLEAR", id="clear-pos", classes="ton")
                 yield Static(
                     "[bold #4a9eff]◈ CLAUDE[/]  [dim]trading co-pilot — monitors, advises, adjusts[/]",
                     id="claude-header", markup=True,
@@ -987,6 +997,12 @@ class BTCKillerApp(App):
         self.query_one("#kelly-wrap").display   = False
         self.query_one("#hardstop-wrap").display = False
         self.query_one("#tg-wrap").display      = False
+        self.query_one("#pos-row").display      = False
+        # Clear any stale position from a previous session
+        try:
+            POS_FILE.write_text("{}")
+        except Exception:
+            pass
         self._load_settings()
         self.set_interval(1.0, self._tick)
 
@@ -1293,8 +1309,9 @@ class BTCKillerApp(App):
                 f"  [dim]expires [/][{ptc}]⏱ {pmins:.1f} min[/]"
             )
             pp.display = True
+            self.query_one("#pos-row", Horizontal).display = True
         else:
-            pp.display = False
+            self.query_one("#pos-row", Horizontal).display = False
 
         # Macro
         def tc_(v, lbl):
@@ -1523,6 +1540,20 @@ class BTCKillerApp(App):
 
     @on(Button.Pressed, "#setup-btn")
     def _h_setup(self): self.action_setup()
+
+    @on(Button.Pressed, "#clear-pos")
+    def _h_clear_pos(self):
+        """Nuke the position file and hide the panel."""
+        for f in [POS_FILE, BOT_DIR.parent / "current_position.json"]:
+            try:
+                f.write_text("{}")
+            except Exception:
+                pass
+        with state_lock:
+            app_state["position"] = None
+        self.query_one("#pos-panel", Static).update("")
+        self.query_one("#pos-row", Horizontal).display = False
+        self.notify("Position cleared", severity="warning", timeout=3)
 
     def _apply_settings(self, changes: dict) -> None:
         """Write Claude-requested setting changes and reload UI."""

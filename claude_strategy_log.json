@@ -1,0 +1,10 @@
+{
+  "entries": [
+    {
+      "ts": "2026-05-04T23:34:24",
+      "source": "chat",
+      "user": "hello",
+      "content": "Hey. Bot is down \u2014 import error on startup because the private key file isn't found at the expected path. That's the first thing to fix before anything else matters.\n\nMissing: /Users/jangles/Desktop/other stuff/KalshiBot_v1/kalshi_private_key.pem\n\nOne trade today: NO on KXBTC15M-26MAY042315-15, qty=43 at 5\u00a2, down $1.98. No live market data coming in since the bot can't connect.\n\nDo you want to fix the key path, or is the file somewhere else on disk?"
+    }
+  ]
+}
