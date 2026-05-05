@@ -1,0 +1,79 @@
+{
+  "decisions": [
+    {
+      "ts": "2026-05-04T23:58:55",
+      "decision": "HOLD",
+      "context": "ticker=KXBTC15M-26MAY050000-00 btc=$0 strike=$80,923 YES=3\u00a2 NO=98\u00a2 1.1min"
+    },
+    {
+      "ts": "2026-05-04T23:59:29",
+      "decision": "HOLD",
+      "context": "ticker=KXBTC15M-26MAY050000-00 btc=$0 strike=$80,923 YES=3\u00a2 NO=98\u00a2 0.6min"
+    },
+    {
+      "ts": "2026-05-05T00:00:04",
+      "decision": "HOLD",
+      "context": "ticker=KXBTC15M-26MAY050000-00 btc=$0 strike=$80,923 YES=0\u00a2 NO=100\u00a2 0.0min"
+    },
+    {
+      "ts": "2026-05-05T00:00:56",
+      "decision": "HOLD",
+      "context": "ticker=KXBTC15M-26MAY050015-15 btc=$0 strike=$80,879 YES=47\u00a2 NO=54\u00a2 14.4min"
+    },
+    {
+      "ts": "2026-05-05T00:01:32",
+      "decision": "HOLD",
+      "context": "ticker=KXBTC15M-26MAY050015-15 btc=$0 strike=$80,879 YES=41\u00a2 NO=61\u00a2 13.5min"
+    },
+    {
+      "ts": "2026-05-05T00:02:06",
+      "decision": "HOLD",
+      "context": "ticker=KXBTC15M-26MAY050015-15 btc=$0 strike=$80,879 YES=36\u00a2 NO=65\u00a2 13.0min"
+    },
+    {
+      "ts": "2026-05-05T00:02:55",
+      "decision": "HOLD",
+      "context": "ticker=KXBTC15M-26MAY050015-15 btc=$0 strike=$80,879 YES=57\u00a2 NO=44\u00a2 12.4min"
+    },
+    {
+      "ts": "2026-05-05T00:04:06",
+      "decision": "HOLD",
+      "context": "ticker=KXBTC15M-26MAY050015-15 btc=$0 strike=$80,879 YES=73\u00a2 NO=28\u00a2 11.6min"
+    },
+    {
+      "ts": "2026-05-05T00:04:56",
+      "decision": "HOLD",
+      "context": "ticker=KXBTC15M-26MAY050015-15 btc=$0 strike=$80,879 YES=67\u00a2 NO=34\u00a2 10.4min"
+    },
+    {
+      "ts": "2026-05-05T00:05:44",
+      "decision": "HOLD",
+      "context": "ticker=KXBTC15M-26MAY050015-15 btc=$0 strike=$80,879 YES=65\u00a2 NO=36\u00a2 9.6min"
+    },
+    {
+      "ts": "2026-05-05T00:06:20",
+      "decision": "HOLD",
+      "context": "ticker=KXBTC15M-26MAY050015-15 btc=$0 strike=$80,879 YES=84\u00a2 NO=17\u00a2 8.7min"
+    },
+    {
+      "ts": "2026-05-05T00:07:15",
+      "decision": "HOLD",
+      "context": "ticker=KXBTC15M-26MAY050015-15 btc=$0 strike=$80,879 YES=82\u00a2 NO=19\u00a2 8.2min"
+    },
+    {
+      "ts": "2026-05-05T00:08:07",
+      "decision": "HOLD",
+      "context": "ticker=KXBTC15M-26MAY050015-15 btc=$0 strike=$80,879 YES=74\u00a2 NO=27\u00a2 7.2min"
+    },
+    {
+      "ts": "2026-05-05T00:08:58",
+      "decision": "HOLD",
+      "context": "ticker=KXBTC15M-26MAY050015-15 btc=$0 strike=$80,879 YES=62\u00a2 NO=39\u00a2 6.4min"
+    },
+    {
+      "ts": "2026-05-05T00:09:34",
+      "decision": "HOLD",
+      "context": "ticker=KXBTC15M-26MAY050015-15 btc=$0 strike=$80,879 YES=52\u00a2 NO=49\u00a2 5.5min"
+    }
+  ]
+}

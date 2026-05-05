@@ -860,8 +860,7 @@ class BTCKillerApp(App):
 
     _log_n: int = 0
     _log_last: str = ""
-    _monitor_tick: int = 0
-    _MONITOR_EVERY: int = 900   # auto-monitor every 15 minutes (~1 per market window)
+    _bot_decision_n: int = 0   # track last seen ClaudeBot decision count
 
     # Settings state
     _top_mode:    str  = "smart"
@@ -964,12 +963,12 @@ class BTCKillerApp(App):
                     yield Static("", id="pos-panel")
                     yield Button("✕ CLEAR", id="clear-pos", classes="ton")
                 yield Static(
-                    "[bold #4a9eff]◈ CLAUDE[/]  [dim]trading co-pilot — monitors, advises, adjusts[/]",
+                    "[bold #4a9eff]◈ CLAUDE[/]  [dim]ClaudeBot feed — decisions stream here, type to send it a message[/]",
                     id="claude-header", markup=True,
                 )
                 yield RichLog(id="claude-log", highlight=False, markup=True,
                               wrap=True, auto_scroll=True)
-                yield Input(placeholder="ask claude...", id="claude-input")
+                yield Input(placeholder="send message to ClaudeBot...", id="claude-input")
 
             # ── RIGHT ────────────────────────────────────────────────────────
             with Vertical(id="right"):
@@ -1416,37 +1415,17 @@ class BTCKillerApp(App):
             self._log_n = len(lines)
 
         # ── Auto-monitor: Claude proactively checks in every 5 min ───────────
-        self._monitor_tick += 1
-        if self._monitor_tick >= self._MONITOR_EVERY:
-            self._monitor_tick = 0
-            self._auto_monitor()
-
-    def _auto_monitor(self) -> None:
-        """Fire a background Claude call to proactively monitor the session."""
-        with state_lock:
-            snap = dict(app_state)
-        if not snap.get("bot_running") and not snap.get("market_ticker"):
-            return   # nothing to monitor yet
-        log = self.query_one("#claude-log", RichLog)
-        log.write("[dim #4a9eff]◈ auto-monitor check…[/]")
-        cfg_snap    = read_cfg()
-        trades_snap = load_trades_today()
-        log_snap    = list(bot_log_buffer)
-        fp = self._firepower
-        threading.Thread(
-            target=_claude_ask,
-            args=(
-                "Proactive monitor check. Review all current data and flag anything worth acting on. Be concise.",
-                snap, cfg_snap,
-                lambda txt: self.call_from_thread(log.write, txt),
-                lambda c:   self.call_from_thread(self._apply_settings, c),
-                fp,
-                lambda: self.call_from_thread(self._fire_bot_from_claude),
-                trades_snap,
-                log_snap,
-            ),
-            daemon=True,
-        ).start()
+        # Push new ClaudeBot decisions into the chat log
+        decisions = _read_bot_decisions()
+        if len(decisions) > self._bot_decision_n:
+            log = self.query_one("#claude-log", RichLog)
+            for d in decisions[self._bot_decision_n:]:
+                ts  = d.get("ts", "")[-8:]
+                dec = d.get("decision", "?")
+                ctx = d.get("context", "")
+                dc  = "#00ff88" if "YES" in dec or "SELL" in dec else "#ffc837" if "NO" in dec else "#4a9eff"
+                log.write(f"[dim]{ts}[/]  [bold {dc}]🤖 {dec}[/]  [dim]{ctx}[/]")
+            self._bot_decision_n = len(decisions)
 
     # ── Button handlers ──────────────────────────────────────────────────────
     @on(Button.Pressed, "#toggle-btn")
@@ -1574,7 +1553,7 @@ class BTCKillerApp(App):
             "  [bold #ff4500]🔥 FIREPOWER ON[/]" if self._firepower else ""
         )
         self.query_one("#claude-header", Static).update(
-            f"[bold #4a9eff]◈ CLAUDE[/]  [dim]trading co-pilot — monitors, advises, adjusts[/]{fp_tag}"
+            f"[bold #4a9eff]◈ CLAUDE[/]  [dim]ClaudeBot feed — decisions stream here, type to send it a message[/]{fp_tag}"
         )
 
     @on(Input.Submitted, "#claude-input")
@@ -1584,41 +1563,9 @@ class BTCKillerApp(App):
             return
         event.input.value = ""
         log = self.query_one("#claude-log", RichLog)
-
-        # Handle firepower toggle locally — no need to round-trip Claude
-        ql = query.lower()
-        if "enable firepower" in ql or "firepower on" in ql:
-            self._firepower = True
-            self._update_claude_header()
-            log.write("[bold #ff4500]🔥 Firepower ENABLED — Claude can now fire trades.[/]")
-            log.write("[dim #ffc837]Type 'disable firepower' or 'firepower off' to revoke.[/]")
-            return
-        if "disable firepower" in ql or "firepower off" in ql:
-            self._firepower = False
-            self._update_claude_header()
-            log.write("[bold #00ff88]✓ Firepower DISABLED.[/]")
-            return
-
-        log.write(f"[dim #4a9eff]▶[/] {query}")
-        with state_lock:
-            snap = dict(app_state)
-        cfg_snap  = read_cfg()
-        trades_snap = load_trades_today()
-        log_snap  = list(bot_log_buffer)
-        fp = self._firepower
-        threading.Thread(
-            target=_claude_ask,
-            args=(
-                query, snap, cfg_snap,
-                lambda txt: self.call_from_thread(log.write, txt),
-                lambda c:   self.call_from_thread(self._apply_settings, c),
-                fp,
-                lambda: self.call_from_thread(self._fire_bot_from_claude),
-                trades_snap,
-                log_snap,
-            ),
-            daemon=True,
-        ).start()
+        log.write(f"[dim #4a9eff]▶ you:[/] {query}")
+        # Write to shared strategy log — ClaudeBot picks it up on next cycle
+        _append_strategy_log("user", query, user_msg=query)
 
     def _fire_bot_from_claude(self) -> None:
         """Called when Claude issues FIRE_BOT and firepower is enabled."""
