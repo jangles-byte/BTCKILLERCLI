@@ -9,6 +9,8 @@ bot_config.json
 bot_status.json
 current_position.json
 trades/
+claude_bot_decisions.json
+claude_strategy_log.json
 
 # Python
 __pycache__/
